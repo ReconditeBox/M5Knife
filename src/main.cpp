@@ -58,7 +58,7 @@ static bool bleInitialized = false;
 static int netMenuIndex=0;
 static WebServer httpFiles(80);
 static bool httpRunning=false,httpUploadFailed=false,httpRoutesRegistered=false;
-static String httpPassword,httpUploadPath;
+static String httpPassword="1234",httpUploadPath;
 static File httpUploadFile;
 static uint32_t httpRequests=0;
 static bool netPingMode=false;
@@ -250,7 +250,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.4.8", 5, 5);
+  d.drawString("M5KNIFE 0.4.9", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -319,7 +319,69 @@ static bool probeSd() {
   }
   return true;
 }
-// /WIFI.CFG uses SSID1/PASS1, SSID2/PASS2, etc.
+// Unified SD configuration. Old files are kept as migration backups.
+static const char* CONFIG_FILE="/M5KNIFE.CFG";
+static String httpUsername="m5knife";
+static bool configReadFile(const char* path,String& out){
+  File f=SD.open(path,FILE_READ);
+  if(!f)return false;
+  if(f.size()>16384){f.close();return false;}
+  out="";out.reserve(f.size()+1);
+  while(f.available())out+=(char)f.read();
+  f.close();return true;
+}
+static String configSection(const String& data,const String& section){
+  String tag="["+section+"]";
+  int pos=data.indexOf(tag);
+  while(pos>=0){
+    if((pos==0||data[pos-1]=='\n') &&
+      (pos+(int)tag.length()==(int)data.length()||data[pos+tag.length()]=='\r'||data[pos+tag.length()]=='\n')){
+      int begin=data.indexOf('\n',pos);
+      if(begin<0)return "";
+      ++begin;
+      int next=data.indexOf("\n[",begin);
+      return data.substring(begin,next<0?data.length():next+1);
+    }
+    pos=data.indexOf(tag,pos+1);
+  }
+  return "";
+}
+static bool configWriteAtomic(const String& data){
+  if(data.length()>16384)return false;
+  const char* tmp="/m5knife.tmp";
+  const char* backup="/m5knife.bak";
+  SD.remove(tmp);
+  File f=SD.open(tmp,FILE_WRITE);if(!f)return false;
+  size_t written=f.print(data);f.flush();f.close();
+  if(written!=data.length()){SD.remove(tmp);return false;}
+  SD.remove(backup);
+  bool hadOriginal=SD.exists(CONFIG_FILE);
+  if(hadOriginal&&!SD.rename(CONFIG_FILE,backup)){SD.remove(tmp);return false;}
+  if(!SD.rename(tmp,CONFIG_FILE)){
+    if(hadOriginal)SD.rename(backup,CONFIG_FILE);
+    SD.remove(tmp);return false;
+  }
+  SD.remove(backup);
+  return true;
+}
+static bool configReplaceSection(const String& name,const String& body){
+  if(usbActive||!sdReady)return false;
+  String original;
+  if(!configReadFile(CONFIG_FILE,original))original="";
+  String header="["+name+"]",replacement=header+"\n"+body;
+  if(!replacement.endsWith("\n"))replacement+="\n";
+  int pos=original.indexOf(header);
+  if(pos>=0&&(pos==0||original[pos-1]=='\n')){
+    int next=original.indexOf("\n[",pos+header.length());
+    if(next>=0)original=original.substring(0,pos)+replacement+original.substring(next+1);
+    else original=original.substring(0,pos)+replacement;
+  }else{
+    if(original.length()&&!original.endsWith("\n"))original+="\n";
+    original+=replacement;
+  }
+  return configWriteAtomic(original);
+}
+// [WIFI] in /M5KNIFE.CFG uses SSID1/PASS1, SSID2/PASS2, etc.
 // Preserve spaces and punctuation in values; no trimming or comment parsing.
 struct WifiRecord { String ssid, pass; };
 static constexpr size_t MAX_WIFI_RECORDS=16;
@@ -329,12 +391,17 @@ static bool wifiConfigSdReady() {
 }
 static bool readWifiRecords(std::vector<WifiRecord>& records) {
   records.clear();
-  File f=SD.open("/WIFI.CFG",FILE_READ);
-  if(!f) return false;
+  String data;
+  if(!configReadFile(CONFIG_FILE,data))return false;
+  String wifiBlock=configSection(data,"WIFI");
+  if(wifiBlock.isEmpty())return true;
+  size_t offset=0;
   String names[MAX_WIFI_RECORDS], passwords[MAX_WIFI_RECORDS];
   bool hasName[MAX_WIFI_RECORDS]={}, hasPassword[MAX_WIFI_RECORDS]={};
-  while(f.available()) {
-    String v=f.readStringUntil('\n');
+  while(offset<wifiBlock.length()) {
+    int eol=wifiBlock.indexOf('\n',offset);
+    String v=eol<0?wifiBlock.substring(offset):wifiBlock.substring(offset,eol);
+    offset=eol<0?wifiBlock.length():eol+1;
     if(v.endsWith("\r")) v.remove(v.length()-1);
     int eq=v.indexOf('=');
     if(eq<0) continue;
@@ -352,28 +419,17 @@ static bool readWifiRecords(std::vector<WifiRecord>& records) {
     if(isSsid) {names[slot-1]=value;hasName[slot-1]=true;}
     else {passwords[slot-1]=value;hasPassword[slot-1]=true;}
   }
-  f.close();
   for(size_t i=0;i<MAX_WIFI_RECORDS;++i)
     if(hasName[i]&&hasPassword[i]&&names[i].length()>0&&names[i].length()<=32&&passwords[i].length()<=63)
       records.push_back({names[i],passwords[i]});
   return true;
 }
 static bool writeWifiRecords(const std::vector<WifiRecord>& records) {
-  // Build the new file before removing the original.
-  SD.remove("/wifi.tmp");
-  File f=SD.open("/wifi.tmp",FILE_WRITE);
-  if(!f) return false;
-  bool ok=true;
-  for(size_t i=0;i<records.size();++i) {
-    String pair=String("SSID")+String(i+1)+"="+records[i].ssid+"\n"+
-      "PASS"+String(i+1)+"="+records[i].pass+"\n\n";
-    if(f.print(pair)!=pair.length()) {ok=false;break;}
-  }
-  f.flush();f.close();
-  if(!ok) {SD.remove("/wifi.tmp");return false;}
-  // FAT rename will not overwrite an existing destination.
-  if(SD.exists("/WIFI.CFG") && !SD.remove("/WIFI.CFG")) return false;
-  return SD.rename("/wifi.tmp","/WIFI.CFG");
+  String body;
+  for(size_t i=0;i<records.size();++i)
+    body+=String("SSID")+String(i+1)+"="+records[i].ssid+"\n"+
+      "PASS"+String(i+1)+"="+records[i].pass+"\n";
+  return configReplaceSection("WIFI",body);
 }
 static void saveWifiConfig() {
   if(WiFi.status()!=WL_CONNECTED || WiFi.SSID()!=wifiTarget) {
@@ -386,8 +442,8 @@ static void saveWifiConfig() {
     scanStatus="Invalid credentials";draw();return;
   }
   std::vector<WifiRecord> records;
-  if(SD.exists("/WIFI.CFG") && !readWifiRecords(records)) {
-    scanStatus="Cannot read WIFI.CFG";draw();return;
+  if(!readWifiRecords(records)) {
+    scanStatus="Cannot read M5KNIFE.CFG";draw();return;
   }
   bool found=false;
   for(auto& item:records)
@@ -396,13 +452,13 @@ static void saveWifiConfig() {
     if(records.size()>=MAX_WIFI_RECORDS) {scanStatus="WiFi config full";draw();return;}
     records.push_back({wifiTarget,wifiPassword});
   }
-  scanStatus=writeWifiRecords(records) ? "Saved /WIFI.CFG" : "Failed saving WIFI.CFG";
+  scanStatus=writeWifiRecords(records) ? "Saved /M5KNIFE.CFG" : "Failed saving M5KNIFE.CFG";
   draw();
 }
 static void loadWifiConfig() {
   if(!wifiConfigSdReady()) {scanStatus="SD card unavailable";draw();return;}
   std::vector<WifiRecord> records;
-  if(!readWifiRecords(records)) {scanStatus="No /WIFI.CFG on SD";draw();return;}
+  if(!readWifiRecords(records)) {scanStatus="No /M5KNIFE.CFG on SD";draw();return;}
   if(records.empty()) {scanStatus="No valid saved networks";draw();return;}
   // L connects to the highlighted network if saved; otherwise report it.
   if(scanSelection>=scanEntries.size()) {scanStatus="Select a network first";draw();return;}
@@ -415,14 +471,18 @@ static void loadWifiConfig() {
       return;
     }
   }
-  scanStatus="Selected WiFi not in WIFI.CFG";draw();
+  scanStatus="Selected WiFi not in M5KNIFE.CFG";draw();
 }
 
 static void readSettings(){
-  if(!sdReady || usbActive)return;
-  File f=SD.open("/M5KNIFE.CFG",FILE_READ);if(!f)return;
-  while(f.available()){
-    String row=f.readStringUntil('\n');row.trim();
+  if(!sdReady||usbActive)return;
+  String data;if(!configReadFile(CONFIG_FILE,data))return;
+  String block=configSection(data,"SETTINGS");
+  int offset=0;
+  while(offset<(int)block.length()){
+    int end=block.indexOf('\n',offset);
+    String row=end<0?block.substring(offset):block.substring(offset,end);
+    offset=end<0?block.length():end+1;row.trim();
     int equal=row.indexOf('=');if(equal<0)continue;
     String key=row.substring(0,equal),value=row.substring(equal+1);
     if(key=="AUTO_WIFI")autoWifi=value!="0";
@@ -431,18 +491,26 @@ static void readSettings(){
     else if(key=="SLEEP_MIN")sleepMinutes=constrain(value.toInt(),0,60);
     else if(key=="TZ_HOURS")tzHours=constrain(value.toInt(),-12,14);
   }
-  f.close();
+  block=configSection(data,"HTTPD");offset=0;
+  while(offset<(int)block.length()){
+    int end=block.indexOf('\n',offset);
+    String row=end<0?block.substring(offset):block.substring(offset,end);
+    offset=end<0?block.length():end+1;
+    if(row.endsWith("\r"))row.remove(row.length()-1);
+    int equal=row.indexOf('=');if(equal<0)continue;
+    String key=row.substring(0,equal),value=row.substring(equal+1);
+    if(key=="USERNAME"&&value.length()&&value.length()<=64)httpUsername=value;
+    if(key=="PASSWORD"&&value.length()&&value.length()<=64)httpPassword=value;
+  }
 }
 static bool saveSettings(){
-  if(!sdReady || usbActive)return false;
-  SD.remove("/M5KNIFE.CFG");
-  File f=SD.open("/M5KNIFE.CFG",FILE_WRITE);if(!f)return false;
-  f.println(String("AUTO_WIFI=")+(autoWifi?"1":"0"));
-  f.println(String("NTP=")+(ntpEnabled?"1":"0"));
-  f.println(String("BRIGHTNESS=")+brightness);
-  f.println(String("SLEEP_MIN=")+sleepMinutes);
-  f.println(String("TZ_HOURS=")+tzHours);
-  f.flush();f.close();return true;
+  if(!sdReady||usbActive)return false;
+  String body=String("AUTO_WIFI=")+(autoWifi?"1":"0")+"\n"+
+    "NTP="+(ntpEnabled?"1":"0")+"\n"+
+    "BRIGHTNESS="+String(brightness)+"\n"+
+    "SLEEP_MIN="+String(sleepMinutes)+"\n"+
+    "TZ_HOURS="+String(tzHours)+"\n";
+  return configReplaceSection("SETTINGS",body);
 }
 static void applySettings(){
   M5Cardputer.Display.setBrightness(brightness);
@@ -470,7 +538,7 @@ static void drawSettings(){
     String("NTP sync: ")+(ntpEnabled?"ON":"OFF"),
     "Timezone: UTC"+String(tzHours>=0?"+":"")+String(tzHours),
     "Brightness: "+String(brightness),
-    "Sleep: "+String(sleepMinutes)+" min",
+    "Sleep: "+(sleepMinutes?String(sleepMinutes)+" min":String("Never")),
     "Save settings",
     "Sync time now"
   };
@@ -490,13 +558,18 @@ static void settingsActivate(int delta){
 
 static bool irLoadProfile() {
   if(usbActive || (!sdReady && !mountSd())) {irNotice="SD not available";return false;}
-  File f=SD.open("/IR.CFG",FILE_READ);
-  if(!f) {irNotice="No /IR.CFG on SD";return false;}
+  String data;
+  if(!configReadFile(CONFIG_FILE,data)) {irNotice="No config on SD";return false;}
+  String block=configSection(data,"REMOTE");
+  if(block.isEmpty()){irNotice="No [REMOTE] profile";return false;}
+  int offset=0;
   String name="";uint32_t address=0;bool addressOk=false;
   uint8_t commands[6]={};bool found[6]={};
-  bool inRemote=false,nec=false,samsung=false;
-  while(f.available()) {
-    String entry=f.readStringUntil('\n'); entry.trim();
+  bool inRemote=true,nec=false,samsung=false;
+  while(offset<(int)block.length()) {
+    int end=block.indexOf('\n',offset);
+    String entry=end<0?block.substring(offset):block.substring(offset,end);
+    offset=end<0?block.length():end+1;entry.trim();
     if(entry=="[REMOTE]") {inRemote=true;continue;}
     if(!inRemote || entry.isEmpty() || entry.startsWith("#") || entry.startsWith(";")) continue;
     int equals=entry.indexOf('='); if(equals<0)continue;
@@ -510,13 +583,12 @@ static bool irLoadProfile() {
       if(parseHexValue(value,v,255)){commands[i]=(uint8_t)v;found[i]=true;}
     }
   }
-  f.close();
-  if((!nec && !samsung) || !addressOk){irNotice="IR.CFG: protocol/address?";return false;}
+  if((!nec && !samsung) || !addressOk){irNotice="IR profile: protocol/address?";return false;}
   irName=name.length()?name:"IR remote";
   irProfileAddress=(uint16_t)address;
   irProfileSamsung=samsung;
   for(int i=0;i<6;i++){irButtonCommands[i]=commands[i];irButtonPresent[i]=found[i];}
-  irProfileLoaded=true; irNotice="Loaded /IR.CFG";
+  irProfileLoaded=true; irNotice="Loaded /M5KNIFE.CFG";
   return true;
 }
 
@@ -728,7 +800,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.4.8",
+    "Version 0.4.9",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
     "",
@@ -800,7 +872,7 @@ static void drawHttpFiles(){
   header("HTTP FILES");
   line(24,"Server running",false,ACCENT);
   line(42,"http://"+WiFi.localIP().toString());
-  line(61,"User: m5knife");
+  line(61,"User: "+httpUsername,false,ACCENT);
   line(78,"Pass: "+httpPassword,false,ACCENT);
   line(96,"Requests: "+String(httpRequests));
   footer("G0 / B stop server");
@@ -856,7 +928,7 @@ static String httpUrlEncode(const String& input){
   return out;
 }
 static bool httpAuth(){
-  if(httpFiles.authenticate("m5knife",httpPassword.c_str()))return true;
+  if(httpFiles.authenticate(httpUsername.c_str(),httpPassword.c_str()))return true;
   httpFiles.requestAuthentication();
   return false;
 }
@@ -1109,7 +1181,7 @@ static void httpDelete(){
   httpRedirect(last<=0?"/":path.substring(0,last));
 }
 static void httpUploadData(){
-  if(!httpFiles.authenticate("m5knife",httpPassword.c_str())){httpUploadFailed=true;return;}
+  if(!httpFiles.authenticate(httpUsername.c_str(),httpPassword.c_str())){httpUploadFailed=true;return;}
   HTTPUpload& upload=httpFiles.upload();
   if(upload.status==UPLOAD_FILE_START){
     httpUploadPath="";
@@ -1144,7 +1216,8 @@ static void startHttpFiles(){
   if(WiFi.status()!=WL_CONNECTED){showMessage("Connect to WiFi first",Screen::Network);return;}
   if(usbActive || (!sdReady && !mountSd())){showMessage("SD unavailable",Screen::Network);return;}
   // Default HTTP Basic authentication password.
-  httpPassword="1234";
+  // Credentials loaded from [HTTPD], otherwise defaults are used.
+  if(httpPassword.isEmpty())httpPassword="1234";
   httpRequests=0;httpUploadFailed=false;httpUploadPath="";
   if(!httpRoutesRegistered){
   httpFiles.on("/",HTTP_GET,httpPage);
@@ -1657,7 +1730,7 @@ static void handleKeys(const Keys& k) {
       if(irMenuIndex==0){screen=Screen::IrManual;irNotice="";draw();return;}
       if(irMenuIndex==1){screen=Screen::IrRemote;irRemoteSelection=0;draw();return;}
       if(irMenuIndex==2){irLoadProfile();draw();return;}
-      showMessage("IR TX: GPIO44\\nProtocols: NEC, Samsung\\nProfiles: /IR.CFG\\nRX requires extra hardware",Screen::Infrared);return;
+      showMessage("IR TX: GPIO44\\nProtocols: NEC, Samsung\\nProfiles: /M5KNIFE.CFG\\nRX requires extra hardware",Screen::Infrared);return;
     }
   } else if(screen==Screen::IrManual) {
     if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
@@ -1686,7 +1759,7 @@ static void handleKeys(const Keys& k) {
     if(k.enter){
       if(irProfileLoaded && irButtonPresent[irRemoteSelection])
         irSend(irProfileAddress,irButtonCommands[irRemoteSelection],irProfileSamsung);
-      else irNotice="Load IR.CFG / code unset";
+      else irNotice="Load M5KNIFE.CFG / code unset";
       draw();return;
     }
   } else if(screen==Screen::WifiPassword) {
