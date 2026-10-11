@@ -1057,21 +1057,36 @@ static bool loadText(){
 }
 static void drawViewer(){
   header(textEdit?"TEXT EDITOR":"TEXT VIEWER");
-  int offset=0,number=0,y=24;
   int cursorLine=0,cursorCol=0;
-  if(textEdit){for(int i=0;i<textCursor;++i){if(textBuffer[i]=='\n'){++cursorLine;cursorCol=0;}else ++cursorCol;}}
-  while(offset<(int)textBuffer.length() && y<=108){
+  if(textEdit)for(int i=0;i<textCursor && i<(int)textBuffer.length();++i){
+    if(textBuffer[i]=='\n'){++cursorLine;cursorCol=0;}else ++cursorCol;
+  }
+  int offset=0,number=0,y=24;
+  // Include the final empty line after a trailing newline, so the caret
+  // remains visible when Enter is pressed at the end of a file.
+  while(offset<=(int)textBuffer.length() && y<=108){
     int next=textBuffer.indexOf('\n',offset);
     if(next<0)next=textBuffer.length();
     String row=textBuffer.substring(offset,next);
     if(number>=textTop){
-      int start= (textEdit && cursorLine==number && cursorCol>28)?cursorCol-28:0;
-      line(y,String(number+1)+": "+row.substring(start,start+30),textEdit && cursorLine==number);y+=14;
+      const bool here=textEdit && cursorLine==number;
+      const int start=(here && cursorCol>=29)?cursorCol-28:0;
+      const String prefix=String(number+1)+": ";
+      String visible=row.substring(start,start+29);
+      line(y,prefix+visible,here);
+      if(here){
+        auto& d=M5Cardputer.Display;
+        // Font0 uses 6px character cells at text size 1.
+        int column=cursorCol-start;
+        int x=7+(prefix.length()+column)*6;
+        if(x>234)x=234;
+        d.fillRect(x,y+10,5,2,ACCENT);
+      }
+      y+=14;
     }
+    if(next==(int)textBuffer.length())break;
     offset=next+1;++number;
   }
-  if(textBuffer.isEmpty())line(24,"(empty file)");
-
   footer(textEdit?"Fn+arrows move Fn+S save Esc exit":"W/S scroll F find E edit B back");
 }
 static bool saveText(){
