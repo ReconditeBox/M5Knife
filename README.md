@@ -1,4 +1,4 @@
-# M5 Toolkit — Cardputer Adv
+# M5Knife — Cardputer Adv
 
 First **development build**, independent of the Cardputer CP/M project.
 
@@ -23,7 +23,7 @@ First **development build**, independent of the Cardputer CP/M project.
 ## PlatformIO — Windows PowerShell
 
 1. Extract this folder to your preferred PlatformIO projects directory.
-2. Open the `M5-Toolkit` folder in VS Code (File > Open Folder).
+2. Open the `M5Knife` folder in VS Code (File > Open Folder).
 3. Insert an SD card (preferably FAT32, backed up) in the Cardputer Adv.
 4. Connect the Cardputer Adv to your PC by USB.
 5. In VS Code choose Terminal > New Terminal. Run:
@@ -51,7 +51,7 @@ Dependency versions are pinned to avoid unexpectedly pulling newer M5GFX release
 
 ## If changing from an older copy
 
-Delete the old `M5-Toolkit` folder or extract this as a new project. If you reuse the same folder, remove `.pio/libdeps` and `.pio/build` before compiling so PlatformIO does not keep the previously downloaded M5GFX library.
+Delete the old `M5Knife` folder or extract this as a new project. If you reuse the same folder, remove `.pio/libdeps` and `.pio/build` before compiling so PlatformIO does not keep the previously downloaded M5GFX library.
 
 ## USB and hot-swap testing (experimental)
 
