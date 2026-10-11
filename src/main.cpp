@@ -155,8 +155,8 @@ static void scanDir() {
     String x = a.name, y = b.name; x.toLowerCase(); y.toLowerCase(); return x < y;
   });
 }
-static void drawHome() {
-  header(sdReady ? "SD READY" : "NO SD");
+static void drawHome(bool fullRefresh = true) {
+  if (fullRefresh) header(sdReady ? "SD READY" : "NO SD");
   auto& d = M5Cardputer.Display;
   const char* labels[6] = {"FILES", "USB", "WIFI", "BLUETOOTH", "STATUS", "ABOUT"};
   // Three visible tiles. Keep the selection centred where possible.
@@ -206,8 +206,9 @@ static void drawHome() {
     d.drawCenterString(labels[i], cx, y+53);
   }
   d.setTextColor(MUTED, BG);
+  d.fillRect(94, 102, 52, 13, BG);
   d.drawCenterString(String(homeIndex+1) + " / 6", 120, 104);
-  footer("A/D or arrows: scroll  Enter  G0");
+  if (fullRefresh) footer("A/D or arrows: scroll  Enter  G0");
 }
 static void drawFiles() {
   header("FILES");
@@ -358,6 +359,7 @@ static void handleKeys(const Keys& k) {
   const bool escape=k.fn && typed(k,'`');
   const bool backspace=k.del && !k.fn;
   if(screen==Screen::Home) {
+    const int previousIndex = homeIndex;
     if(left && homeIndex > 0) --homeIndex;
     if(right && homeIndex < 5) ++homeIndex;
     if(k.enter) {
@@ -366,6 +368,10 @@ static void handleKeys(const Keys& k) {
       // WiFi, Bluetooth, Status and About are inactive placeholders.
       return;
     }
+    // Keep the fixed header/footer in place. Only repaint the icon strip
+    // when the highlighted item changes; this prevents the full-screen flash.
+    if (homeIndex != previousIndex) drawHome(false);
+    return;
   } else if(screen==Screen::Files) {
     if (up && selected>0) --selected;
     if (down && selected+1<entries.size()) ++selected;
