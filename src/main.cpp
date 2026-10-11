@@ -5,6 +5,7 @@
 #include <USB.h>
 #include <USBMSC.h>
 #include <WiFi.h>
+#include <esp_system.h>
 #include <BLEDevice.h>
 #include <BLEScan.h>
 #include <cstring>
@@ -17,7 +18,7 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Bluetooth };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Bluetooth, Status };
 enum class Action { None, Mkdir, Rename, Delete };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -288,6 +289,28 @@ static void drawScan(bool wifi) {
   }
   footer("W/S scroll  R rescan  B back  G0");
 }
+static String hardwareAddress(esp_mac_type_t type) {
+  uint8_t mac[6] = {0};
+  if (esp_read_mac(mac, type) != ESP_OK) return "Unavailable";
+  char result[18];
+  snprintf(result, sizeof(result), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+  return String(result);
+}
+static void drawStatus() {
+  header("STATUS");
+  const bool connected = WiFi.status() == WL_CONNECTED;
+  line(23, "WiFi network", false, ACCENT);
+  String ssid = connected ? WiFi.SSID() : "Not connected";
+  if (ssid.length()>34) ssid=ssid.substring(0,31)+"...";
+  line(36, ssid);
+  line(51, "IP address", false, ACCENT);
+  line(64, connected ? WiFi.localIP().toString() : "Not connected");
+  line(79, "WiFi MAC", false, ACCENT);
+  line(91, hardwareAddress(ESP_MAC_WIFI_STA));
+  line(104, String("BT MAC: ")+hardwareAddress(ESP_MAC_BT));
+  footer("R refresh  B back  G0 menu");
+}
 static void drawDisk() {
   header("FILES / DISK");
   line(29, "SD card operations", false, ACCENT);
@@ -377,6 +400,7 @@ static void draw() {
     case Screen::Message: drawMessage(); break;
     case Screen::Wifi: drawScan(true); break;
     case Screen::Bluetooth: drawScan(false); break;
+    case Screen::Status: drawStatus(); break;
   }
 }
 static void goHome() { screen=Screen::Home; action=Action::None; draw(); }
@@ -432,7 +456,8 @@ static void handleKeys(const Keys& k) {
       else if(homeIndex==1) startUsb();
       else if(homeIndex==2) scanWifi();
       else if(homeIndex==3) scanBluetooth();
-      // Status and About remain inactive placeholders.
+      else if(homeIndex==4) {screen=Screen::Status;draw();}
+      // About remains an inactive placeholder.
       return;
     }
   } else if(screen==Screen::Wifi || screen==Screen::Bluetooth) {
@@ -442,6 +467,10 @@ static void handleKeys(const Keys& k) {
     if (down && scanSelection+1<scanEntries.size()) ++scanSelection;
     if (scanSelection<scanScroll) scanScroll=scanSelection;
     if (scanSelection>=scanScroll+6) scanScroll=scanSelection-5;
+  } else if(screen==Screen::Status) {
+    if(escape||backspace||typed(k,'b')) {goHome();return;}
+    if(typed(k,'r')) {drawStatus();return;}
+    return;
   } else if(screen==Screen::Files) {
     if (up && selected>0) --selected;
     if (down && selected+1<entries.size()) ++selected;
