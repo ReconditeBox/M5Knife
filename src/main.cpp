@@ -534,7 +534,7 @@ static void scanDir() {
 static void drawHome() {
   header("HOME");
   auto& d = M5Cardputer.Display;
-  const char* labels[9] = {"FILES", "USB", "WIFI", "NETWORK", "BLUETOOTH", "INFRARED", "STATUS", "ABOUT", "SETTINGS"};
+  const char* labels[9] = {"FILES", "USB", "WIFI", "NETWORK", "BLUETOOTH", "INFRARED", "SETTINGS", "STATUS", "ABOUT"};
   // Three visible tiles. Keep the selection centred where possible.
   const int first = std::min(6, std::max(0, homeIndex - 1));
   for (int slot = 0; slot < 3; ++slot) {
@@ -580,15 +580,7 @@ static void drawHome() {
       d.fillCircle(cx-9,cy,4,ink);
       d.drawArc(cx-10,cy,11,9,300,60,ink);
       d.drawArc(cx-10,cy,18,16,300,60,ink);
-    } else if (i == 6) { // Status: gauge
-      d.drawCircle(cx,cy,13,ink);
-      d.drawLine(cx,cy,cx+7,cy-7,ink);
-      d.fillCircle(cx,cy,2,ink);
-    } else if (i==7) { // About: information symbol
-      d.drawCircle(cx,cy,13,ink);
-      d.fillCircle(cx,cy-7,2,ink);
-      d.drawLine(cx,cy-2,cx,cy+9,ink);
-    } else { // Settings
+    } else if (i == 6) { // Settings
       d.drawCircle(cx,cy,11,ink);
       d.drawCircle(cx,cy,4,ink);
       for(int a=0;a<8;a++){
@@ -596,6 +588,14 @@ static void drawHome() {
         d.drawLine(cx+(int)(12*cos(angle)),cy+(int)(12*sin(angle)),
                    cx+(int)(16*cos(angle)),cy+(int)(16*sin(angle)),ink);
       }
+    } else if (i == 7) { // Status: gauge
+      d.drawCircle(cx,cy,13,ink);
+      d.drawLine(cx,cy,cx+7,cy-7,ink);
+      d.fillCircle(cx,cy,2,ink);
+    } else { // About: information symbol
+      d.drawCircle(cx,cy,13,ink);
+      d.fillCircle(cx,cy-7,2,ink);
+      d.drawLine(cx,cy-2,cx,cy+9,ink);
     }
     d.setTextColor(ink, fill);
     d.drawCenterString(labels[i], cx, y+53);
@@ -1204,13 +1204,13 @@ static void handleKeys(const Keys& k) {
           screen = Screen::Infrared;
           draw();
           break;
-        case 6:
+        case 6: screen=Screen::Settings;settingsIndex=0;drawSettings();break;
+        case 7:
           screen = Screen::Status;
           statusScroll=0;
           drawStatus();
           break;
-        case 7: screen=Screen::About;aboutScroll=0;drawAbout();break;
-        case 8: screen=Screen::Settings;settingsIndex=0;drawSettings();break;
+        case 8: screen=Screen::About;aboutScroll=0;drawAbout();break;
       }
       return;
     }
