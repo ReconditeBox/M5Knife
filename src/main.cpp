@@ -177,7 +177,25 @@ static void header(const char* text) {
   d.setTextSize(1);
   d.drawString("M5KNIFE 0.3.0", 5, 5);
   d.setTextColor(FG, 0x0205);
-  d.drawRightString(text, 235, 5);
+  // Reserve the top-right of every screen for compact status icons.
+  d.drawRightString(text, 185, 5);
+  if (sdReady) {
+    // MicroSD card silhouette, 12x12.
+    const int x=196, y=3;
+    d.drawLine(x+3,y,x+11,y,MUTED);
+    d.drawLine(x+11,y,x+11,y+12,MUTED);
+    d.drawLine(x+11,y+12,x,y+12,MUTED);
+    d.drawLine(x,y+12,x,y+3,MUTED);
+    d.drawLine(x,y+3,x+3,y,MUTED);
+    d.fillRect(x+3,y+5,6,4,ACCENT);
+  }
+  if (WiFi.status()==WL_CONNECTED) {
+    // WiFi arcs and dot: green when connected, hidden otherwise.
+    const int x=224, y=12;
+    d.drawArc(x,y,9,8,220,320,ACCENT);
+    d.drawArc(x,y,6,5,220,320,ACCENT);
+    d.fillCircle(x,y,2,ACCENT);
+  }
 }
 static void footer(const String& text) {
   auto& d = M5Cardputer.Display;
@@ -343,7 +361,7 @@ static void scanDir() {
   });
 }
 static void drawHome() {
-  header(sdReady ? "SD READY" : "NO SD");
+  header("HOME");
   auto& d = M5Cardputer.Display;
   const char* labels[6] = {"FILES", "USB", "WIFI", "BLUETOOTH", "STATUS", "ABOUT"};
   // Three visible tiles. Keep the selection centred where possible.
