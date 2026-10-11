@@ -29,6 +29,8 @@ static bool waitingKeyRelease = false;
 static USBMSC msc;
 static bool usbActive = false;
 static bool usbConfigured = false;
+static bool usbStarted = false;
+static volatile bool usbSuspended = false;
 static uint32_t usbSectorCount = 0;
 static uint8_t probeSector[512];
 static volatile bool usbEjected = false, usbConnected = false, usbWriting = false;
@@ -74,6 +76,8 @@ static void usbEvent(void*, esp_event_base_t base, int32_t event, void*) {
   if (base != ARDUINO_USB_EVENTS) return;
   if (event == ARDUINO_USB_STARTED_EVENT) usbConnected = true;
   if (event == ARDUINO_USB_STOPPED_EVENT) usbConnected = false;
+  if (event == ARDUINO_USB_SUSPEND_EVENT) usbSuspended = true;
+  if (event == ARDUINO_USB_RESUME_EVENT) usbSuspended = false;
 }
 
 
@@ -230,10 +234,12 @@ static void drawUsb() {
   header("USB");
   line(27, "USB SD-card reader", false, ACCENT);
   if (!usbActive) { line(48, "No SD card mounted", false, WARN); footer("G0 main menu"); return; }
-  line(47, usbEjected ? "Drive ejected by host" : "Eject drive on PC first", false, usbEjected ? ACCENT : WARN);
-  line(67, usbConnected ? "USB controller started" : "USB controller not ready");
-  line(88, "File manager disabled");
-  footer("G0 after eject/unplug");
+  line(42, String("MSC: ") + (usbConfigured ? "READY" : "FAILED"), false, usbConfigured ? ACCENT : WARN);
+  line(57, String("USB: ") + (usbStarted ? "STARTED" : "FAILED"), false, usbStarted ? ACCENT : WARN);
+  line(72, String("Host: ") + ((bool)USB ? "MOUNTED" : (usbSuspended ? "SUSPENDED" : "NOT MOUNTED")));
+  line(87, String("Sectors: ") + String(usbSectorCount));
+  line(102, usbEjected ? "Ejected - G0 to leave" : "Eject in Windows before G0", false, WARN);
+  footer("USB diagnostics / G0 after eject");
 }
 static void draw();
 static void stopUsb() {
@@ -249,7 +255,7 @@ static void stopUsb() {
 static void startUsb() {
   if (!mountSd()) {screen=Screen::Usb;draw();return;}
   if (SD.sectorSize()!=512 || SD.numSectors()==0) {screen=Screen::Usb;draw();return;}
-  if (!usbConfigured) {screen=Screen::Usb;draw();return;}
+  if (!usbConfigured || !usbStarted) {screen=Screen::Usb;draw();return;}
   usbSectorCount=SD.numSectors();
   usbEjected=false;
   usbActive=true;
@@ -425,8 +431,9 @@ void setup() {
   msc.mediaPresent(false);
   const uint32_t sectors = sdReady ? SD.numSectors() : 0;
   // Report a large enough logical unit; actual limits enforced in callbacks.
+  usbSectorCount = sectors;
   usbConfigured = msc.begin(sectors ? sectors : 1048576, 512);
-  if (usbConfigured) USB.begin();
+  if (usbConfigured) usbStarted = USB.begin();
   draw();
 }
 void loop() {
