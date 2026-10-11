@@ -906,6 +906,7 @@ static void httpTree(){
   result+="]";
   httpFiles.send(200,"application/json; charset=utf-8",result);
 }
+static const char* httpInlineType(const String& filename);
 static void httpPage(){
   if(!httpAuth())return;
   ++httpRequests;
