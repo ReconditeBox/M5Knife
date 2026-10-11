@@ -40,6 +40,8 @@ static String wifiTarget, wifiPassword;
 static uint32_t wifiConnectStarted = 0;
 static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 18000;
 static void draw();
+static void beginWifiConnection(); // Used by SD WiFi config loader.
+
 static void scanWifi() {
   scanEntries.clear(); scanSelection=scanScroll=0;
   screen=Screen::Wifi;
