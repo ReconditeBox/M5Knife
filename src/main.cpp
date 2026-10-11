@@ -77,41 +77,56 @@ static void scanDir() {
 static void drawHome() {
   header(sdReady ? "SD READY" : "NO SD");
   auto& d = M5Cardputer.Display;
-  const char* labels[4] = {"FILES", "USB", "WIFI", "BLUETOOTH"};
-  for (int i = 0; i < 4; ++i) {
-    const int x = 11 + (i % 2) * 117;
-    const int y = 23 + (i / 2) * 47;
-    const bool active = (homeIndex == i);
+  const char* labels[6] = {"FILES", "USB", "WIFI", "BLUETOOTH", "STATUS", "ABOUT"};
+  // Three visible tiles. Keep the selection centred where possible.
+  const int first = std::min(3, std::max(0, homeIndex - 1));
+  for (int slot = 0; slot < 3; ++slot) {
+    const int i = first + slot;
+    const int x = 8 + slot * 78;
+    const int y = 29;
+    const bool active = homeIndex == i;
     const uint16_t fill = active ? SEL : 0x1082;
     const uint16_t ink = active ? ACCENT : FG;
-    d.fillRoundRect(x, y, 102, 42, 5, fill);
-    d.drawRoundRect(x, y, 102, 42, 5, active ? ACCENT : MUTED);
-    if (i == 0) { // Files: folder symbol
-      d.fillRoundRect(x+8, y+15, 26, 17, 2, 0xFFE0);
-      d.fillRect(x+8, y+11, 12, 7, 0xFFE0);
-    } else if (i == 1) { // USB trident
-      d.drawLine(x+20,y+10,x+20,y+32,ink);
-      d.drawLine(x+20,y+10,x+16,y+15,ink);
-      d.drawLine(x+20,y+10,x+24,y+15,ink);
-      d.drawLine(x+20,y+23,x+12,y+18,ink);
-      d.fillCircle(x+12,y+18,2,ink);
-      d.drawLine(x+20,y+28,x+29,y+22,ink);
-      d.fillRect(x+27,y+20,5,5,ink);
-    } else if (i == 2) { // WiFi signal
-      d.drawArc(x+21,y+30,17,15,220,320,ink);
-      d.drawArc(x+21,y+30,11,9,220,320,ink);
-      d.fillCircle(x+21,y+29,2,ink);
-    } else { // Bluetooth rune
-      d.drawLine(x+20,y+8,x+20,y+34,ink);
-      d.drawLine(x+20,y+8,x+29,y+16,ink);
-      d.drawLine(x+29,y+16,x+13,y+28,ink);
-      d.drawLine(x+13,y+14,x+29,y+28,ink);
-      d.drawLine(x+29,y+28,x+20,y+34,ink);
+    d.fillRoundRect(x, y, 68, 70, 5, fill);
+    d.drawRoundRect(x, y, 68, 70, 5, active ? ACCENT : MUTED);
+    const int cx = x + 34;
+    const int cy = y + 27;
+    if (i == 0) { // Folder
+      d.fillRoundRect(cx-14,cy-5,28,19,2,0xFFE0);
+      d.fillRect(cx-14,cy-9,13,6,0xFFE0);
+    } else if (i == 1) { // USB
+      d.drawLine(cx,cy-15,cx,cy+14,ink);
+      d.drawLine(cx,cy-15,cx-5,cy-10,ink);
+      d.drawLine(cx,cy-15,cx+5,cy-10,ink);
+      d.drawLine(cx,cy+2,cx-11,cy-5,ink);
+      d.fillCircle(cx-11,cy-5,2,ink);
+      d.drawLine(cx,cy+9,cx+10,cy+2,ink);
+      d.fillRect(cx+8,cy,5,5,ink);
+    } else if (i == 2) { // WiFi
+      d.drawArc(cx,cy+9,20,17,220,320,ink);
+      d.drawArc(cx,cy+9,13,10,220,320,ink);
+      d.fillCircle(cx,cy+8,3,ink);
+    } else if (i == 3) { // Bluetooth
+      d.drawLine(cx,cy-15,cx,cy+15,ink);
+      d.drawLine(cx,cy-15,cx+10,cy-7,ink);
+      d.drawLine(cx+10,cy-7,cx-8,cy+8,ink);
+      d.drawLine(cx-8,cy-8,cx+10,cy+7,ink);
+      d.drawLine(cx+10,cy+7,cx,cy+15,ink);
+    } else if (i == 4) { // Status: gauge
+      d.drawCircle(cx,cy,13,ink);
+      d.drawLine(cx,cy,cx+7,cy-7,ink);
+      d.fillCircle(cx,cy,2,ink);
+    } else { // About: information symbol
+      d.drawCircle(cx,cy,13,ink);
+      d.fillCircle(cx,cy-7,2,ink);
+      d.drawLine(cx,cy-2,cx,cy+9,ink);
     }
-    d.setTextColor(ink,fill);
-    d.drawString(labels[i],x+39,y+17);
+    d.setTextColor(ink, fill);
+    d.drawCenterString(labels[i], cx, y+53);
   }
-  footer("WASD select  Enter open  G0 home");
+  d.setTextColor(MUTED, BG);
+  d.drawCenterString(String(homeIndex+1) + " / 6", 120, 104);
+  footer("A/D or arrows: scroll  Enter  G0");
 }
 static void drawFiles() {
   header("FILES");
@@ -238,14 +253,12 @@ static void handleKeys(const Keys& k) {
   const bool escape=k.fn && typed(k,'`');
   const bool backspace=k.del && !k.fn;
   if(screen==Screen::Home) {
-    if(left) homeIndex = (homeIndex & 2) | ((homeIndex & 1) ^ 1);
-    if(right) homeIndex = (homeIndex & 2) | ((homeIndex & 1) ^ 1);
-    if(up) homeIndex = (homeIndex + 2) % 4;
-    if(down) homeIndex = (homeIndex + 2) % 4;
+    if(left && homeIndex > 0) --homeIndex;
+    if(right && homeIndex < 5) ++homeIndex;
     if(k.enter) {
       if(homeIndex==0) openFiles();
       else if(homeIndex==1) {screen=Screen::Usb;draw();}
-      // WiFi and Bluetooth are intentionally inactive placeholders.
+      // WiFi, Bluetooth, Status and About are inactive placeholders.
       return;
     }
   } else if(screen==Screen::Files) {
