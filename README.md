@@ -191,3 +191,38 @@ Existing upload, download, rename, delete and new-folder actions remain on the p
 ### Browser file previews (development)
 
 In the HTTP file manager, clicking a recognised file opens it in a browser tab with its appropriate MIME type: plain text/source files, CSV, JSON, PNG/JPEG/GIF/WebP/BMP/ICO images, PDF, MP3/WAV/OGG audio, and MP4/WebM video. The **Download** link still forces a download. Unrecognised or potentially active content (HTML, SVG, JavaScript) is downloaded instead of executed from the Cardputer server. The change retains HTTP Basic authentication (`m5knife` / `1234`) and has not yet been build- or hardware-tested.
+
+### Unified SD configuration (v0.4.9 development)
+
+The firmware now uses one SD-card file, `/M5KNIFE.CFG`, split into `[SETTINGS]`, `[WIFI]`, `[REMOTE]`, and `[HTTPD]` sections. On startup it migrates the previous `M5KNIFE.CFG`, `WIFI.CFG`, and `IR.CFG` automatically. The original legacy Wi-Fi and infrared files remain on the SD card as backups and are no longer used after migration. Section updates preserve the other sections; an intermediate temporary file and backup are used when updating the configuration.
+
+Example (replace with your own values; IR button names match the existing profile):
+```ini
+[SETTINGS]
+AUTO_WIFI=1
+NTP=1
+BRIGHTNESS=128
+SLEEP_MIN=0
+TZ_HOURS=0
+
+[WIFI]
+SSID1=MyNetwork
+PASS1=MyPassword
+
+[REMOTE]
+NAME=My remote
+PROTOCOL=NEC
+ADDRESS=00FF
+POWER=45
+VOLUP=46
+VOLDOWN=47
+CHUP=48
+CHDOWN=49
+MUTE=4A
+
+[HTTPD]
+USERNAME=m5knife
+PASSWORD=1234
+```
+
+**SLEEP_MIN=0 means never sleep**, and is the default. Set `USERNAME` and `PASSWORD` in the `[HTTPD]` section to change HTTP Basic login; if omitted, defaults remain `m5knife` / `1234`. The password is stored in plaintext on the SD card and transmitted over unencrypted HTTP; use only on a trusted network. Stop HTTPD before editing its configuration, and restart the Cardputer to load changes. This version needs compilation and on-device migration testing before merge.
