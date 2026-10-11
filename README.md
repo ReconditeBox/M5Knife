@@ -150,8 +150,8 @@ The launcher now has **Network** immediately after WiFi. WiFi remains responsibl
 
 ### Network tools — stage two (experimental)
 
-- **TCP port scan**: enter a hostname or IPv4 address. Checks only common TCP ports (21,22,23,25,53,80,110,139,443,445,3389,8080) with 180 ms per-port connection timeouts. Reports ports that accept connections; this does not test UDP.
-- **LAN scanner**: on a /24 subnet only, checks the first 32 host addresses for reachable TCP port 80 or 443 (75 ms timeout per port). This is **not** a full subnet or comprehensive device discovery scan; devices without those open ports are omitted.
-- **TCP client**: enter `host:port`, press Enter, enter one optional text line and press Enter again. It sends the line with CRLF, reads up to 350 response bytes for about 1.6 seconds, then closes. It does not speak TLS/HTTPS and is not a full interactive terminal.
-  
-Use only on networks and devices you are authorised to inspect. Results are shown on the small built-in screen and may be truncated. Network connections can take a few seconds, during which the UI may temporarily be unresponsive. Existing Ping/DNS/Network Info remain unchanged. This code is not yet compiled or hardware-tested and must not be merged into `main` until verified.
+- **TCP port scan**: enter a host; check 12 common TCP ports and report only those accepting connections.
+- **LAN scanner**: edit an inclusive range in the form `192.168.1.1-192.168.1.254`. The default is derived from WiFi's local address and subnet mask (bounded to at most 256 IP addresses). Lists only hosts answering TCP connection attempts and their open ports (21,22,23,53,80,139,443,445,3389,8080). W/S scrolls result lines. Other hosts, including devices that block TCP connections, are not detectable with this method. A full /24 range can take a while to scan.
+- **TCP client**: removed for now.
+
+Use only on networks and devices you are authorised to inspect. This revision is not yet compiled or hardware-tested. Tested `main` remains unchanged.
