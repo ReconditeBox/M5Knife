@@ -155,3 +155,7 @@ The launcher now has **Network** immediately after WiFi. WiFi remains responsibl
 - **TCP client**: removed for now.
 
 Use only on networks and devices you are authorised to inspect. This revision is not yet compiled or hardware-tested. Tested `main` remains unchanged.
+
+## Scrollable Status metrics (experimental)
+
+The Status screen shows WiFi SSID and IPv4, WiFi/Bluetooth MAC addresses, SD total/used/free capacity in MiB, ESP32 heap size/free/minimum-free values in KiB, and the Cardputer battery percentage and voltage. W/S (or the keyboard's up/down keys) scroll through seven visible rows; R refreshes readings; B or G0 returns home. SD usage may take time to calculate depending on card contents. This branch has not yet been compiled or tested on the Cardputer Adv; `main` is unchanged.
