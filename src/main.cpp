@@ -47,6 +47,7 @@ static String irEditText, irNotice;
 static String irName="No IR profile";
 static uint16_t irProfileAddress=0;
 static bool irProfileLoaded=false;
+static bool irProfileSamsung=false;
 static int irRemoteSelection=0;
 static const char* const irButtonNames[]={"POWER","VOLUP","VOLDOWN","CHUP","CHDOWN","MUTE"};
 static uint8_t irButtonCommands[6]={};
@@ -64,9 +65,16 @@ static bool parseHexValue(String value,uint32_t& out,uint32_t limit) {
   if(v>limit) return false;
   out=v; return true;
 }
-static void irSend(uint16_t address,uint8_t command) {
-  IrSender.sendNEC(address,command,0);
-  irNotice="Sent NEC 0x"+String(address,HEX)+"/0x"+String(command,HEX);
+static void irSend(uint16_t address,uint8_t command,bool samsung=false) {
+  if(samsung) {
+    // Profile uses conventional MSB-first Samsung32 hex codes such as
+    // POWER E0E040BF => ADDRESS=E0E0, POWER=40.
+    uint32_t raw=((uint32_t)address<<16)|((uint32_t)command<<8)|(uint8_t)~command;
+    IrSender.sendSamsungMSB(raw,32);
+  } else {
+    IrSender.sendNEC(address,command,0);
+  }
+  irNotice=String("Sent ")+(samsung?"Samsung":"NEC")+" 0x"+String(address,HEX)+"/0x"+String(command,HEX);
 }
 
 static String wifiTarget, wifiPassword;
@@ -382,7 +390,7 @@ static bool irLoadProfile() {
   if(!f) {irNotice="No /IR.CFG on SD";return false;}
   String name="";uint32_t address=0;bool addressOk=false;
   uint8_t commands[6]={};bool found[6]={};
-  bool inRemote=false,nec=false;
+  bool inRemote=false,nec=false,samsung=false;
   while(f.available()) {
     String entry=f.readStringUntil('\n'); entry.trim();
     if(entry=="[REMOTE]") {inRemote=true;continue;}
@@ -391,7 +399,7 @@ static bool irLoadProfile() {
     String key=entry.substring(0,equals),value=entry.substring(equals+1);
     key.trim();value.trim();
     if(key=="NAME")name=value;
-    else if(key=="PROTOCOL")nec=value.equalsIgnoreCase("NEC");
+    else if(key=="PROTOCOL") {nec=value.equalsIgnoreCase("NEC");samsung=value.equalsIgnoreCase("SAMSUNG");}
     else if(key=="ADDRESS")addressOk=parseHexValue(value,address,65535);
     else for(int i=0;i<6;i++)if(key==irButtonNames[i]){
       uint32_t v=0;
@@ -399,9 +407,10 @@ static bool irLoadProfile() {
     }
   }
   f.close();
-  if(!nec || !addressOk){irNotice="IR.CFG needs NEC/ADDRESS";return false;}
+  if((!nec && !samsung) || !addressOk){irNotice="IR.CFG: protocol/address?";return false;}
   irName=name.length()?name:"IR remote";
   irProfileAddress=(uint16_t)address;
+  irProfileSamsung=samsung;
   for(int i=0;i<6;i++){irButtonCommands[i]=commands[i];irButtonPresent[i]=found[i];}
   irProfileLoaded=true; irNotice="Loaded /IR.CFG";
   return true;
@@ -568,7 +577,7 @@ static void drawStatus() {
 }
 static void drawIrMenu() {
   header("INFRARED");
-  line(26,"NEC IR transmitter - GPIO44",false,ACCENT);
+  line(26,"NEC / Samsung TX - GPIO44",false,ACCENT);
   const char* options[]={"Manual transmit","Remote control","Load SD profile","IR information"};
   for(int i=0;i<4;++i) line(45+i*16,options[i],irMenuIndex==i);
   footer("W/S select Enter  B/G0 back");
@@ -590,7 +599,7 @@ static void drawIrEdit() {
 }
 static void drawIrRemote() {
   header("IR REMOTE");
-  line(21,irName.substring(0,30),false,ACCENT);
+  line(21,(irName+(irProfileSamsung?" [SAM]":" [NEC]")).substring(0,32),false,ACCENT);
   for(int i=0;i<6;++i) {
     String name=String(irButtonNames[i])+(irButtonPresent[i]?"":" (unset)");
     line(36+i*13,name,irRemoteSelection==i);
@@ -792,7 +801,7 @@ static void handleKeys(const Keys& k) {
       if(irMenuIndex==0){screen=Screen::IrManual;irNotice="";draw();return;}
       if(irMenuIndex==1){screen=Screen::IrRemote;irRemoteSelection=0;draw();return;}
       if(irMenuIndex==2){irLoadProfile();draw();return;}
-      showMessage("IR TX: GPIO44\\nProtocol: NEC\\nProfiles: /IR.CFG\\nRX requires extra hardware",Screen::Infrared);return;
+      showMessage("IR TX: GPIO44\\nProtocols: NEC, Samsung\\nProfiles: /IR.CFG\\nRX requires extra hardware",Screen::Infrared);return;
     }
   } else if(screen==Screen::IrManual) {
     if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
@@ -820,7 +829,7 @@ static void handleKeys(const Keys& k) {
     if(down && irRemoteSelection<5)++irRemoteSelection;
     if(k.enter){
       if(irProfileLoaded && irButtonPresent[irRemoteSelection])
-        irSend(irProfileAddress,irButtonCommands[irRemoteSelection]);
+        irSend(irProfileAddress,irButtonCommands[irRemoteSelection],irProfileSamsung);
       else irNotice="Load IR.CFG / code unset";
       draw();return;
     }
