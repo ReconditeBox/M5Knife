@@ -65,4 +65,4 @@ The USB screen now reports whether MSC registration succeeded, whether the USB d
 
 ## Display behaviour
 
-The main launcher uses partial icon-strip redraws when moving selection, avoiding a full-screen clear on each navigation keypress. Other screens still use full redraws and may be optimised separately.
+The launcher redraw optimisation has been reverted pending USB regression testing. Navigation may flicker until a safer rendering change is implemented.
