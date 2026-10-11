@@ -1038,27 +1038,58 @@ static void drawMessage() {
   }
   footer("Enter / G0 home");
 }
-static void drawViewer() {
-  header("VIEW TEXT");
-  File file=SD.open(selectedPath.c_str(),FILE_READ);
-  if (!file) { line(40,"Cannot open file",false,WARN); footer("B back  G0 home"); return; }
-  String row; int y=25; int chars=0;
-  while (file.available() && y<=105 && chars<2000) {
-    int c=file.read(); ++chars;
-    if (c=='\r') continue;
-    if (c=='\n' || row.length()>=37) {
-      line(y,row); y+=12; row="";
-    }
-    if (c>=32 && c<=126) row+=(char)c;
+static String textBuffer;
+static int textTop=0, textCursor=0;
+static bool textEdit=false;
+static bool textDirty=false;
+static String textFind;
+static bool loadText(){
+  File f=SD.open(selectedPath.c_str(),FILE_READ);
+  if(!f)return false;
+  if(f.size()>8192){f.close();return false;}
+  textBuffer="";
+  while(f.available()){char c=f.read();if(c!='\r')textBuffer+=c;}
+  f.close();textTop=0;textCursor=0;textEdit=false;textDirty=false;
+  return true;
+}
+static void drawViewer(){
+  header(textEdit?"TEXT EDITOR":"TEXT VIEWER");
+  int offset=0,number=0,y=24;
+  while(offset<(int)textBuffer.length() && y<=108){
+    int next=textBuffer.indexOf('\n',offset);
+    if(next<0)next=textBuffer.length();
+    String row=textBuffer.substring(offset,next);
+    if(number>=textTop){line(y,String(number+1)+": "+row.substring(0,31),textEdit && textCursor==number);y+=14;}
+    offset=next+1;++number;
   }
-  if (row.length() && y<=105) line(y,row);
-  file.close(); footer("Preview only  B back  G0 home");
+  if(textBuffer.isEmpty())line(24,"(empty file)");
+  footer(textEdit?"Type  Enter NL  Fn+S save  B exit":"W/S scroll F find E edit B back");
+}
+static bool saveText(){
+  if(!sdReady||usbActive)return false;
+  String temporary=selectedPath+".tmp",backup=selectedPath+".bak";
+  SD.remove(temporary.c_str());
+  File f=SD.open(temporary.c_str(),FILE_WRITE);
+  if(!f)return false;
+  size_t written=f.print(textBuffer);f.flush();f.close();
+  if(written!=textBuffer.length()){SD.remove(temporary.c_str());return false;}
+  SD.remove(backup.c_str());
+  if(!SD.rename(selectedPath.c_str(),backup.c_str()))return false;
+  if(!SD.rename(temporary.c_str(),selectedPath.c_str())){
+    SD.rename(backup.c_str(),selectedPath.c_str());return false;
+  }
+  SD.remove(backup.c_str());textDirty=false;return true;
+}
+static void drawEditorSearch(){
+  header("FIND TEXT");line(30,"Find:",false,ACCENT);line(55,textFind);
+  footer("Enter search  Esc cancel");
 }
 static void draw() {
   switch(screen) {
     case Screen::Home: drawHome(); break;
     case Screen::Files: drawFiles(); break;
     case Screen::Viewer: drawViewer(); break;
+    case Screen::EditorSearch: drawEditorSearch(); break;
     case Screen::Disk: drawDisk(); break;
     case Screen::Usb: drawUsb(); break;
     case Screen::Input: drawInput(); break;
@@ -1106,7 +1137,7 @@ static void activateFile() {
   const auto& e=entries[selected];
   selectedPath=childPath(e.name);
   if (e.dir) { cwd=selectedPath; scanDir(); draw(); }
-  else { screen=Screen::Viewer; draw(); }
+  else {if(!loadText()){showMessage("File too large or unreadable",Screen::Files);return;}screen=Screen::Viewer;draw();}
 }
 static void backFile() {
   if (cwd=="/") {goHome();return;}
@@ -1295,7 +1326,32 @@ static void handleKeys(const Keys& k) {
     if(typed(k,'e') && selected<entries.size()) {action=Action::Rename;selectedPath=childPath(entries[selected].name);inputText=entries[selected].name;screen=Screen::Input;draw();return;}
     if(typed(k,'x') && selected<entries.size()) {action=Action::Delete;selectedPath=childPath(entries[selected].name);screen=Screen::Confirm;draw();return;}
   } else if(screen==Screen::Viewer) {
-    if(escape||backspace||typed(k,'b')||k.enter) {screen=Screen::Files;draw();return;}
+    if(escape || (k.fn && typed(k,'b'))){textEdit=false;screen=Screen::Files;draw();return;}
+    if(k.fn && typed(k,'s') && textEdit){showMessage(saveText()?"Saved":"Save failed",Screen::Viewer);return;}
+    if(!textEdit && typed(k,'e')){textEdit=true;draw();return;}
+    if(!textEdit && typed(k,'f')){textFind="";screen=Screen::EditorSearch;draw();return;}
+    if(up && textTop>0)--textTop;
+    if(down && textTop<1000)++textTop;
+    if(textEdit) {
+      if(k.del && textBuffer.length()){textBuffer.remove(textBuffer.length()-1);textDirty=true;}
+      else if(k.enter && textBuffer.length()<8192){textBuffer+='\n';textDirty=true;}
+      else if(!k.fn)for(char c:k.word)if(c>=32&&c<=126&&textBuffer.length()<8192){textBuffer+=c;textDirty=true;}
+      // First version appends text; scrolling remains available.
+    }
+    draw();return;
+  } else if(screen==Screen::EditorSearch) {
+    if(escape){screen=Screen::Viewer;draw();return;}
+    if(k.enter){
+      int pos=textBuffer.indexOf(textFind);
+      if(pos>=0 && textFind.length()){
+        textTop=0;
+        for(int i=0;i<pos;++i)if(textBuffer[i]=='\n')++textTop;
+      }
+      screen=Screen::Viewer;draw();return;
+    }
+    if(k.del&&textFind.length())textFind.remove(textFind.length()-1);
+    else if(!k.fn)for(char c:k.word)if(c>=32&&c<=126&&textFind.length()<40)textFind+=c;
+    draw();return;
   } else if(screen==Screen::Disk) {
     if(up||down) diskIndex=1-diskIndex;
     if(k.enter) {
