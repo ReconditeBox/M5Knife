@@ -53,9 +53,24 @@ static String childPath(const String& name) {
   return cwd == "/" ? "/" + name : cwd + "/" + name;
 }
 static bool mountSd() {
+  // SD.begin() alone is not sufficient to declare the card usable.
+  sdReady = false;
+  SD.end();
   SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
-  sdReady = SD.begin(SD_CS, SPI, 16000000);
-  return sdReady;
+  if (!SD.begin(SD_CS, SPI, 16000000)) return false;
+  if (SD.cardType() == CARD_NONE || SD.cardSize() == 0) {
+    SD.end();
+    return false;
+  }
+  File root = SD.open("/");
+  const bool usable = root && root.isDirectory();
+  if (root) root.close();
+  if (!usable) {
+    SD.end();
+    return false;
+  }
+  sdReady = true;
+  return true;
 }
 static void scanDir() {
   entries.clear(); selected=scrollPos=0;
@@ -208,7 +223,7 @@ static void draw() {
   }
 }
 static void goHome() { screen=Screen::Home; action=Action::None; draw(); }
-static void openFiles() { if (!sdReady) mountSd(); cwd="/"; scanDir(); screen=Screen::Files; draw(); }
+static void openFiles() { mountSd(); cwd="/"; scanDir(); screen=Screen::Files; draw(); }
 static void showMessage(const String& s, Screen back=Screen::Files) {
   message=s; returnScreen=back; screen=Screen::Message; draw();
 }
@@ -268,7 +283,7 @@ static void handleKeys(const Keys& k) {
     if(selected>=scrollPos+6) scrollPos=selected-5;
     if(k.enter) {activateFile();return;}
     if(escape||backspace||typed(k,'b')) {backFile();return;}
-    if(typed(k,'r')) { if(!sdReady) mountSd(); scanDir(); }
+    if(typed(k,'r')) { mountSd(); scanDir(); }
     if(typed(k,'m')) {diskIndex=0;screen=Screen::Disk;draw();return;}
     if(typed(k,'n') && sdReady) {action=Action::Mkdir;inputText="";screen=Screen::Input;draw();return;}
     if(typed(k,'e') && selected<entries.size()) {action=Action::Rename;selectedPath=childPath(entries[selected].name);inputText=entries[selected].name;screen=Screen::Input;draw();return;}
