@@ -224,15 +224,61 @@ static bool probeSd() {
   }
   return true;
 }
-// Plaintext credentials on SD root. Never touch SD while USB MSC owns it.
+// /wifi.conf uses SSID1/PASS1, SSID2/PASS2, etc.
+// Preserve spaces and punctuation in values; no trimming or comment parsing.
+struct WifiRecord { String ssid, pass; };
+static constexpr size_t MAX_WIFI_RECORDS=16;
 static bool wifiConfigSdReady() {
   if (usbActive) return false;
   return sdReady ? probeSd() : mountSd();
 }
-static String wifiReadLine(File& f) {
-  String v=f.readStringUntil('\n');
-  if(v.endsWith("\r")) v.remove(v.length()-1);
-  return v;
+static bool readWifiRecords(std::vector<WifiRecord>& records) {
+  records.clear();
+  File f=SD.open("/wifi.conf",FILE_READ);
+  if(!f) return false;
+  String names[MAX_WIFI_RECORDS], passwords[MAX_WIFI_RECORDS];
+  bool hasName[MAX_WIFI_RECORDS]={}, hasPassword[MAX_WIFI_RECORDS]={};
+  while(f.available()) {
+    String v=f.readStringUntil('\n');
+    if(v.endsWith("\r")) v.remove(v.length()-1);
+    int eq=v.indexOf('=');
+    if(eq<0) continue;
+    String key=v.substring(0,eq), value=v.substring(eq+1);
+    bool isSsid=key.startsWith("SSID"), isPass=key.startsWith("PASS");
+    if(!isSsid && !isPass) continue;
+    String number=key.substring(isSsid?4:4);
+    if(!number.length()) continue;
+    bool digits=true;
+    for(size_t j=0;j<number.length();++j)
+      if(number[j]<'0'||number[j]>'9') {digits=false;break;}
+    if(!digits) continue;
+    int slot=number.toInt();
+    if(slot<1 || slot>(int)MAX_WIFI_RECORDS) continue;
+    if(isSsid) {names[slot-1]=value;hasName[slot-1]=true;}
+    else {passwords[slot-1]=value;hasPassword[slot-1]=true;}
+  }
+  f.close();
+  for(size_t i=0;i<MAX_WIFI_RECORDS;++i)
+    if(hasName[i]&&hasPassword[i]&&names[i].length()>0&&names[i].length()<=32&&passwords[i].length()<=63)
+      records.push_back({names[i],passwords[i]});
+  return true;
+}
+static bool writeWifiRecords(const std::vector<WifiRecord>& records) {
+  // Build the new file before removing the original.
+  SD.remove("/wifi.tmp");
+  File f=SD.open("/wifi.tmp",FILE_WRITE);
+  if(!f) return false;
+  bool ok=true;
+  for(size_t i=0;i<records.size();++i) {
+    String pair=String("SSID")+String(i+1)+"="+records[i].ssid+"\n"+
+      "PASS"+String(i+1)+"="+records[i].pass+"\n\n";
+    if(f.print(pair)!=pair.length()) {ok=false;break;}
+  }
+  f.flush();f.close();
+  if(!ok) {SD.remove("/wifi.tmp");return false;}
+  // FAT rename will not overwrite an existing destination.
+  if(SD.exists("/wifi.conf") && !SD.remove("/wifi.conf")) return false;
+  return SD.rename("/wifi.tmp","/wifi.conf");
 }
 static void saveWifiConfig() {
   if(WiFi.status()!=WL_CONNECTED || WiFi.SSID()!=wifiTarget) {
@@ -244,31 +290,37 @@ static void saveWifiConfig() {
      wifiPassword.indexOf('\n')>=0 || wifiPassword.indexOf('\r')>=0) {
     scanStatus="Invalid credentials";draw();return;
   }
-  // Replace, never append.
-  SD.remove("/wifi.conf");
-  File file=SD.open("/wifi.conf",FILE_WRITE);
-  if(!file) {scanStatus="Cannot create wifi.conf";draw();return;}
-  String data=String("SSID=")+wifiTarget+"\nPASSWORD="+wifiPassword+"\n";
-  size_t n=file.print(data);
-  file.flush();file.close();
-  scanStatus=n==data.length() ? "Saved /wifi.conf (plaintext)" : "WiFi config write failed";
+  std::vector<WifiRecord> records;
+  if(SD.exists("/wifi.conf") && !readWifiRecords(records)) {
+    scanStatus="Cannot read wifi.conf";draw();return;
+  }
+  bool found=false;
+  for(auto& item:records)
+    if(item.ssid==wifiTarget) {item.pass=wifiPassword;found=true;break;}
+  if(!found) {
+    if(records.size()>=MAX_WIFI_RECORDS) {scanStatus="WiFi config full";draw();return;}
+    records.push_back({wifiTarget,wifiPassword});
+  }
+  scanStatus=writeWifiRecords(records) ? "Saved /wifi.conf" : "Failed saving wifi.conf";
   draw();
 }
 static void loadWifiConfig() {
   if(!wifiConfigSdReady()) {scanStatus="SD card unavailable";draw();return;}
-  File file=SD.open("/wifi.conf",FILE_READ);
-  if(!file) {scanStatus="No /wifi.conf on SD";draw();return;}
-  String ssid=wifiReadLine(file), pass=wifiReadLine(file);
-  file.close();
-  if(!ssid.startsWith("SSID=") || !pass.startsWith("PASSWORD=")) {
-    scanStatus="Invalid wifi.conf format";draw();return;
+  std::vector<WifiRecord> records;
+  if(!readWifiRecords(records)) {scanStatus="No /wifi.conf on SD";draw();return;}
+  if(records.empty()) {scanStatus="No valid saved networks";draw();return;}
+  // L connects to the highlighted network if saved; otherwise report it.
+  if(scanSelection>=scanEntries.size()) {scanStatus="Select a network first";draw();return;}
+  const String target=scanEntries[scanSelection].label;
+  for(const auto& item:records) {
+    if(item.ssid==target) {
+      wifiTarget=item.ssid;
+      wifiPassword=item.pass;
+      beginWifiConnection();
+      return;
+    }
   }
-  ssid.remove(0,5);pass.remove(0,9);
-  if(ssid.isEmpty() || ssid.length()>32 || pass.length()>63) {
-    scanStatus="Invalid SSID/password";draw();return;
-  }
-  wifiTarget=ssid;wifiPassword=pass;
-  beginWifiConnection();
+  scanStatus="Selected WiFi not in wifi.conf";draw();
 }
 
 static void scanDir() {
