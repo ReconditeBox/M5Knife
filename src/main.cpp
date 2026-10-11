@@ -250,7 +250,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.4.8", 5, 5);
+  d.drawString("M5KNIFE 0.4.9", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -399,7 +399,7 @@ static void migrateLegacyConfig(){
   merged+="\n[HTTPD]\nUSERNAME=m5knife\nPASSWORD=1234\n";
   configWriteAtomic(merged);
 }
-// /M5KNIFE.CFG uses SSID1/PASS1, SSID2/PASS2, etc.
+// [WIFI] in /M5KNIFE.CFG uses SSID1/PASS1, SSID2/PASS2, etc.
 // Preserve spaces and punctuation in values; no trimming or comment parsing.
 struct WifiRecord { String ssid, pass; };
 static constexpr size_t MAX_WIFI_RECORDS=16;
@@ -412,7 +412,7 @@ static bool readWifiRecords(std::vector<WifiRecord>& records) {
   String data;
   if(!configReadFile(CONFIG_FILE,data))return false;
   String wifiBlock=configSection(data,"WIFI");
-  if(wifiBlock.isEmpty())return false;
+  if(wifiBlock.isEmpty())return true;
   size_t offset=0;
   String names[MAX_WIFI_RECORDS], passwords[MAX_WIFI_RECORDS];
   bool hasName[MAX_WIFI_RECORDS]={}, hasPassword[MAX_WIFI_RECORDS]={};
@@ -460,7 +460,7 @@ static void saveWifiConfig() {
     scanStatus="Invalid credentials";draw();return;
   }
   std::vector<WifiRecord> records;
-  if(SD.exists(CONFIG_FILE) && !readWifiRecords(records)) {
+  if(!readWifiRecords(records)) {
     scanStatus="Cannot read M5KNIFE.CFG";draw();return;
   }
   bool found=false;
@@ -601,12 +601,12 @@ static bool irLoadProfile() {
       if(parseHexValue(value,v,255)){commands[i]=(uint8_t)v;found[i]=true;}
     }
   }
-  if((!nec && !samsung) || !addressOk){irNotice="IR.CFG: protocol/address?";return false;}
+  if((!nec && !samsung) || !addressOk){irNotice="IR profile: protocol/address?";return false;}
   irName=name.length()?name:"IR remote";
   irProfileAddress=(uint16_t)address;
   irProfileSamsung=samsung;
   for(int i=0;i<6;i++){irButtonCommands[i]=commands[i];irButtonPresent[i]=found[i];}
-  irProfileLoaded=true; irNotice="Loaded /IR.CFG";
+  irProfileLoaded=true; irNotice="Loaded /M5KNIFE.CFG";
   return true;
 }
 
@@ -818,7 +818,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.4.8",
+    "Version 0.4.9",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
     "",
@@ -890,8 +890,7 @@ static void drawHttpFiles(){
   header("HTTP FILES");
   line(24,"Server running",false,ACCENT);
   line(42,"http://"+WiFi.localIP().toString());
-  line(61,"User: m5knife");
-  line(65,"User: "+httpUsername,false,ACCENT);
+  line(61,"User: "+httpUsername,false,ACCENT);
   line(78,"Pass: "+httpPassword,false,ACCENT);
   line(96,"Requests: "+String(httpRequests));
   footer("G0 / B stop server");
@@ -1749,7 +1748,7 @@ static void handleKeys(const Keys& k) {
       if(irMenuIndex==0){screen=Screen::IrManual;irNotice="";draw();return;}
       if(irMenuIndex==1){screen=Screen::IrRemote;irRemoteSelection=0;draw();return;}
       if(irMenuIndex==2){irLoadProfile();draw();return;}
-      showMessage("IR TX: GPIO44\\nProtocols: NEC, Samsung\\nProfiles: /IR.CFG\\nRX requires extra hardware",Screen::Infrared);return;
+      showMessage("IR TX: GPIO44\\nProtocols: NEC, Samsung\\nProfiles: /M5KNIFE.CFG\\nRX requires extra hardware",Screen::Infrared);return;
     }
   } else if(screen==Screen::IrManual) {
     if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
@@ -1778,7 +1777,7 @@ static void handleKeys(const Keys& k) {
     if(k.enter){
       if(irProfileLoaded && irButtonPresent[irRemoteSelection])
         irSend(irProfileAddress,irButtonCommands[irRemoteSelection],irProfileSamsung);
-      else irNotice="Load IR.CFG / code unset";
+      else irNotice="Load M5KNIFE.CFG / code unset";
       draw();return;
     }
   } else if(screen==Screen::WifiPassword) {
