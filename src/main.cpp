@@ -20,6 +20,7 @@
 #include <cstring>
 #include <vector>
 #include <algorithm>
+#include <time.h>
 
 // M5Stack Cardputer Adv microSD slot, shared with the original Cardputer.
 static constexpr int SD_CS = 12, SD_MOSI = 14, SD_MISO = 39, SD_SCK = 40;
@@ -27,8 +28,8 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting, About };
-enum class Action { None, Mkdir, Rename, Delete };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting, About, Settings, Editor, EditorSearch };
+enum class Action { None, Mkdir, Rename, Delete, NewText };
 struct Entry { String name; bool dir; uint64_t size; };
 
 static Screen screen = Screen::Home, returnScreen = Screen::Files;
@@ -40,6 +41,13 @@ static size_t selected = 0, scrollPos = 0;
 static int homeIndex = 0, diskIndex = 0;
 static int statusScroll=0;
 static int aboutScroll=0;
+static int settingsIndex=0, viewerTop=0, editorLine=0, editorColumn=0;
+static bool autoWifi=true, ntpEnabled=true;
+static int brightness=128, sleepMinutes=0, tzHours=0;
+static uint32_t lastInteraction=0;
+static String editorText, searchText, editorNotice;
+static bool editorDirty=false, editorSearchMode=false;
+static bool ntpStarted=false;
 static bool waitingKeyRelease = false;
 struct ScanEntry { String label; int rssi; bool secured; };
 static std::vector<ScanEntry> scanEntries;
@@ -100,6 +108,7 @@ static uint32_t wifiConnectStarted = 0;
 static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 18000;
 static void draw();
 static void beginWifiConnection(); // Used by SD WiFi config loader.
+static void showMessage(const String&, Screen);
 
 static void scanWifi() {
   scanEntries.clear(); scanSelection=scanScroll=0;
@@ -234,7 +243,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.4.5", 5, 5);
+  d.drawString("M5KNIFE 0.4.6", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -402,6 +411,76 @@ static void loadWifiConfig() {
   scanStatus="Selected WiFi not in WIFI.CFG";draw();
 }
 
+static void readSettings(){
+  if(!sdReady || usbActive)return;
+  File f=SD.open("/M5KNIFE.CFG",FILE_READ);if(!f)return;
+  while(f.available()){
+    String row=f.readStringUntil('\n');row.trim();
+    int equal=row.indexOf('=');if(equal<0)continue;
+    String key=row.substring(0,equal),value=row.substring(equal+1);
+    if(key=="AUTO_WIFI")autoWifi=value!="0";
+    else if(key=="NTP")ntpEnabled=value!="0";
+    else if(key=="BRIGHTNESS")brightness=constrain(value.toInt(),20,255);
+    else if(key=="SLEEP_MIN")sleepMinutes=constrain(value.toInt(),0,60);
+    else if(key=="TZ_HOURS")tzHours=constrain(value.toInt(),-12,14);
+  }
+  f.close();
+}
+static bool saveSettings(){
+  if(!sdReady || usbActive)return false;
+  SD.remove("/M5KNIFE.CFG");
+  File f=SD.open("/M5KNIFE.CFG",FILE_WRITE);if(!f)return false;
+  f.println(String("AUTO_WIFI=")+(autoWifi?"1":"0"));
+  f.println(String("NTP=")+(ntpEnabled?"1":"0"));
+  f.println(String("BRIGHTNESS=")+brightness);
+  f.println(String("SLEEP_MIN=")+sleepMinutes);
+  f.println(String("TZ_HOURS=")+tzHours);
+  f.flush();f.close();return true;
+}
+static void applySettings(){
+  M5Cardputer.Display.setBrightness(brightness);
+}
+static void startNtp(){
+  if(ntpEnabled && !ntpStarted && WiFi.status()==WL_CONNECTED){
+    configTime(tzHours*3600,0,"pool.ntp.org","time.google.com");
+    ntpStarted=true;
+  }
+}
+static void autoConnectWifi(){
+  if(!autoWifi||!sdReady || usbActive || WiFi.status()==WL_CONNECTED)return;
+  std::vector<WifiRecord> saved;
+  if(!readWifiRecords(saved)||saved.empty())return;
+  wifiTarget=saved[0].ssid;wifiPassword=saved[0].pass;
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifiTarget.c_str(),wifiPassword.c_str());
+  wifiConnectStarted=millis();
+  // Startup connection is asynchronous; the user can keep using the menu.
+}
+static void drawSettings(){
+  header("SETTINGS");
+  String rows[]={
+    String("Auto WiFi: ")+(autoWifi?"ON":"OFF"),
+    String("NTP sync: ")+(ntpEnabled?"ON":"OFF"),
+    "Timezone: UTC"+String(tzHours>=0?"+":"")+String(tzHours),
+    "Brightness: "+String(brightness),
+    "Sleep: "+String(sleepMinutes)+" min",
+    "Save settings",
+    "Sync time now"
+  };
+  for(int i=0;i<7;i++)line(22+i*14,rows[i],i==settingsIndex);
+  footer("W/S select A/D change Enter");
+}
+static void settingsActivate(int delta){
+  if(settingsIndex==0)autoWifi=!autoWifi;
+  else if(settingsIndex==1){ntpEnabled=!ntpEnabled;ntpStarted=false;}
+  else if(settingsIndex==2){tzHours=constrain(tzHours+delta,-12,14);ntpStarted=false;}
+  else if(settingsIndex==3)brightness=constrain(brightness+delta*16,20,255);
+  else if(settingsIndex==4)sleepMinutes=constrain(sleepMinutes+delta,0,60);
+  else if(settingsIndex==5){showMessage(saveSettings()?"Settings saved":"SD unavailable",Screen::Settings);return;}
+  else if(settingsIndex==6){ntpStarted=false;startNtp();}
+  applySettings();drawSettings();
+}
+
 static bool irLoadProfile() {
   if(usbActive || (!sdReady && !mountSd())) {irNotice="SD not available";return false;}
   File f=SD.open("/IR.CFG",FILE_READ);
@@ -455,9 +534,9 @@ static void scanDir() {
 static void drawHome() {
   header("HOME");
   auto& d = M5Cardputer.Display;
-  const char* labels[8] = {"FILES", "USB", "WIFI", "NETWORK", "BLUETOOTH", "INFRARED", "STATUS", "ABOUT"};
+  const char* labels[9] = {"FILES", "USB", "WIFI", "NETWORK", "BLUETOOTH", "INFRARED", "SETTINGS", "STATUS", "ABOUT"};
   // Three visible tiles. Keep the selection centred where possible.
-  const int first = std::min(5, std::max(0, homeIndex - 1));
+  const int first = std::min(6, std::max(0, homeIndex - 1));
   for (int slot = 0; slot < 3; ++slot) {
     const int i = first + slot;
     const int x = 8 + slot * 78;
@@ -501,7 +580,15 @@ static void drawHome() {
       d.fillCircle(cx-9,cy,4,ink);
       d.drawArc(cx-10,cy,11,9,300,60,ink);
       d.drawArc(cx-10,cy,18,16,300,60,ink);
-    } else if (i == 6) { // Status: gauge
+    } else if (i == 6) { // Settings
+      d.drawCircle(cx,cy,11,ink);
+      d.drawCircle(cx,cy,4,ink);
+      for(int a=0;a<8;a++){
+        float angle=a*3.1415926f/4;
+        d.drawLine(cx+(int)(12*cos(angle)),cy+(int)(12*sin(angle)),
+                   cx+(int)(16*cos(angle)),cy+(int)(16*sin(angle)),ink);
+      }
+    } else if (i == 7) { // Status: gauge
       d.drawCircle(cx,cy,13,ink);
       d.drawLine(cx,cy,cx+7,cy-7,ink);
       d.fillCircle(cx,cy,2,ink);
@@ -514,7 +601,7 @@ static void drawHome() {
     d.drawCenterString(labels[i], cx, y+53);
   }
   d.setTextColor(MUTED, BG);
-  d.drawCenterString(String(homeIndex+1) + " / 8", 120, 104);
+  d.drawCenterString(String(homeIndex+1) + " / 9", 120, 104);
   footer("A/D or arrows: scroll  Enter  G0");
 }
 static void drawFiles() {
@@ -606,7 +693,9 @@ static void drawStatus() {
     "Min heap: "+String(ESP.getMinFreeHeap()/1024)+" KiB",
     "Heap size: "+String(ESP.getHeapSize()/1024)+" KiB",
     "Battery: "+String(M5.Power.getBatteryLevel())+"%",
-    "Battery: "+String(M5.Power.getBatteryVoltage())+" mV"
+    "Battery: "+String(M5.Power.getBatteryVoltage())+" mV",
+    "Clock:",
+    []()->String {struct tm t; if(!getLocalTime(&t,10))return "Not synchronised";char b[28];strftime(b,sizeof(b),"%Y-%m-%d %H:%M:%S",&t);return String(b);}()
   };
   const int total=sizeof(rows)/sizeof(rows[0]);
   if(statusScroll>total-7)statusScroll=total-7;
@@ -622,7 +711,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.4.5",
+    "Version 0.4.6",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
     "",
@@ -931,8 +1020,8 @@ static void startUsb() {
   screen=Screen::Usb;draw();
 }
 static void drawInput() {
-  header(action==Action::Mkdir?"NEW FOLDER":"RENAME");
-  line(32, action==Action::Mkdir?"Folder name:":"New name:", false, ACCENT);
+  header(action==Action::Mkdir?"NEW FOLDER":action==Action::NewText?"NEW TEXT FILE":"RENAME");
+  line(32, action==Action::Mkdir?"Folder name:":action==Action::NewText?"File name:":"New name:", false, ACCENT);
   line(54, inputText.length()>33 ? inputText.substring(inputText.length()-33) : inputText);
   footer("Type  Enter OK  Fn+` cancel");
 }
@@ -952,27 +1041,79 @@ static void drawMessage() {
   }
   footer("Enter / G0 home");
 }
-static void drawViewer() {
-  header("VIEW TEXT");
-  File file=SD.open(selectedPath.c_str(),FILE_READ);
-  if (!file) { line(40,"Cannot open file",false,WARN); footer("B back  G0 home"); return; }
-  String row; int y=25; int chars=0;
-  while (file.available() && y<=105 && chars<2000) {
-    int c=file.read(); ++chars;
-    if (c=='\r') continue;
-    if (c=='\n' || row.length()>=37) {
-      line(y,row); y+=12; row="";
-    }
-    if (c>=32 && c<=126) row+=(char)c;
+static String textBuffer;
+static int textTop=0, textCursor=0;
+static bool textEdit=false;
+static bool textDirty=false;
+static String textFind;
+static bool loadText(){
+  File f=SD.open(selectedPath.c_str(),FILE_READ);
+  if(!f)return false;
+  if(f.size()>8192){f.close();return false;}
+  textBuffer="";
+  while(f.available()){char c=f.read();if(c!='\r')textBuffer+=c;}
+  f.close();textTop=0;textCursor=0;textEdit=false;textDirty=false;
+  return true;
+}
+static void drawViewer(){
+  header(textEdit?"TEXT EDITOR":"TEXT VIEWER");
+  int cursorLine=0,cursorCol=0;
+  if(textEdit)for(int i=0;i<textCursor && i<(int)textBuffer.length();++i){
+    if(textBuffer[i]=='\n'){++cursorLine;cursorCol=0;}else ++cursorCol;
   }
-  if (row.length() && y<=105) line(y,row);
-  file.close(); footer("Preview only  B back  G0 home");
+  int offset=0,number=0,y=24;
+  // Include the final empty line after a trailing newline, so the caret
+  // remains visible when Enter is pressed at the end of a file.
+  while(offset<=(int)textBuffer.length() && y<=108){
+    int next=textBuffer.indexOf('\n',offset);
+    if(next<0)next=textBuffer.length();
+    String row=textBuffer.substring(offset,next);
+    if(number>=textTop){
+      const bool here=textEdit && cursorLine==number;
+      const int start=(here && cursorCol>=29)?cursorCol-28:0;
+      const String prefix=String(number+1)+": ";
+      String visible=row.substring(start,start+29);
+      line(y,prefix+visible,here);
+      if(here){
+        auto& d=M5Cardputer.Display;
+        // Font0 uses 6px character cells at text size 1.
+        int column=cursorCol-start;
+        int x=7+(prefix.length()+column)*6;
+        if(x>234)x=234;
+        d.fillRect(x,y+10,5,2,ACCENT);
+      }
+      y+=14;
+    }
+    if(next==(int)textBuffer.length())break;
+    offset=next+1;++number;
+  }
+  footer(textEdit?"Fn+arrows move Fn+S save Esc exit":"W/S scroll F find E edit B back");
+}
+static bool saveText(){
+  if(!sdReady||usbActive)return false;
+  String temporary=selectedPath+".tmp",backup=selectedPath+".bak";
+  SD.remove(temporary.c_str());
+  File f=SD.open(temporary.c_str(),FILE_WRITE);
+  if(!f)return false;
+  size_t written=f.print(textBuffer);f.flush();f.close();
+  if(written!=textBuffer.length()){SD.remove(temporary.c_str());return false;}
+  SD.remove(backup.c_str());
+  if(!SD.rename(selectedPath.c_str(),backup.c_str())){SD.remove(temporary.c_str());return false;}
+  if(!SD.rename(temporary.c_str(),selectedPath.c_str())){
+    SD.rename(backup.c_str(),selectedPath.c_str());return false;
+  }
+  SD.remove(backup.c_str());textDirty=false;return true;
+}
+static void drawEditorSearch(){
+  header("FIND TEXT");line(30,"Find:",false,ACCENT);line(55,textFind);
+  footer("Enter search  Esc cancel");
 }
 static void draw() {
   switch(screen) {
     case Screen::Home: drawHome(); break;
     case Screen::Files: drawFiles(); break;
     case Screen::Viewer: drawViewer(); break;
+    case Screen::EditorSearch: drawEditorSearch(); break;
     case Screen::Disk: drawDisk(); break;
     case Screen::Usb: drawUsb(); break;
     case Screen::Input: drawInput(); break;
@@ -990,6 +1131,7 @@ static void draw() {
     case Screen::IrRemote: drawIrRemote(); break;
     case Screen::Status: drawStatus(); break;
     case Screen::About: drawAbout(); break;
+    case Screen::Settings: drawSettings(); break;
     case Screen::WifiPassword: drawWifiPassword(); break;
     case Screen::WifiConnecting: drawWifiConnecting(); break;
   }
@@ -1010,6 +1152,10 @@ static void completeInput() {
   String to=childPath(inputText);
   if (SD.exists(to)) { showMessage("Name already exists."); return; }
   if (action==Action::Mkdir) ok=SD.mkdir(to.c_str());
+  if (action==Action::NewText) {
+    File file=SD.open(to.c_str(),FILE_WRITE);
+    if(file){file.close();ok=true;}
+  }
   if (action==Action::Rename) ok=SD.rename(selectedPath.c_str(),to.c_str());
   action=Action::None; scanDir(); screen=Screen::Files; draw();
   if (!ok) showMessage("SD operation failed.");
@@ -1019,7 +1165,7 @@ static void activateFile() {
   const auto& e=entries[selected];
   selectedPath=childPath(e.name);
   if (e.dir) { cwd=selectedPath; scanDir(); draw(); }
-  else { screen=Screen::Viewer; draw(); }
+  else {if(!loadText()){showMessage("File too large or unreadable",Screen::Files);return;}screen=Screen::Viewer;draw();}
 }
 static void backFile() {
   if (cwd=="/") {goHome();return;}
@@ -1041,7 +1187,7 @@ static void handleKeys(const Keys& k) {
   const bool backspace=k.del && !k.fn;
   if(screen==Screen::Home) {
     if(left && homeIndex > 0) --homeIndex;
-    if(right && homeIndex < 7) ++homeIndex;
+    if(right && homeIndex < 8) ++homeIndex;
     if(k.enter) {
       // Explicit dispatch for all eight launcher tiles.
       switch (homeIndex) {
@@ -1058,15 +1204,24 @@ static void handleKeys(const Keys& k) {
           screen = Screen::Infrared;
           draw();
           break;
-        case 6:
+        case 6: screen=Screen::Settings;settingsIndex=0;drawSettings();break;
+        case 7:
           screen = Screen::Status;
           statusScroll=0;
           drawStatus();
           break;
-        case 7: screen=Screen::About;aboutScroll=0;drawAbout();break;
+        case 8: screen=Screen::About;aboutScroll=0;drawAbout();break;
       }
       return;
     }
+  } else if(screen==Screen::Settings) {
+    if(escape||backspace||typed(k,'b')){goHome();return;}
+    if(up && settingsIndex>0)--settingsIndex;
+    if(down && settingsIndex<6)++settingsIndex;
+    if(left)settingsActivate(-1);
+    else if(right || k.enter)settingsActivate(1);
+    else drawSettings();
+    return;
   } else if(screen==Screen::About) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && aboutScroll>0)--aboutScroll;
@@ -1184,7 +1339,7 @@ static void handleKeys(const Keys& k) {
     if(escape||backspace||typed(k,'b')) {goHome();return;}
     if(typed(k,'r')) {drawStatus();return;}
     if(up && statusScroll>0)--statusScroll;
-    if(down && statusScroll<8)++statusScroll;
+    if(down && statusScroll<10)++statusScroll;
     drawStatus();return;
   } else if(screen==Screen::Files) {
     if (up && selected>0) --selected;
@@ -1196,10 +1351,66 @@ static void handleKeys(const Keys& k) {
     if(typed(k,'r')) { if (!sdReady) mountSd(); else probeSd(); scanDir(); }
     if(typed(k,'m')) {diskIndex=0;screen=Screen::Disk;draw();return;}
     if(typed(k,'n') && sdReady) {action=Action::Mkdir;inputText="";screen=Screen::Input;draw();return;}
+    if(typed(k,'t') && sdReady) {action=Action::NewText;inputText="";screen=Screen::Input;draw();return;}
     if(typed(k,'e') && selected<entries.size()) {action=Action::Rename;selectedPath=childPath(entries[selected].name);inputText=entries[selected].name;screen=Screen::Input;draw();return;}
     if(typed(k,'x') && selected<entries.size()) {action=Action::Delete;selectedPath=childPath(entries[selected].name);screen=Screen::Confirm;draw();return;}
   } else if(screen==Screen::Viewer) {
-    if(escape||backspace||typed(k,'b')||k.enter) {screen=Screen::Files;draw();return;}
+    if(escape || (k.fn && typed(k,'b'))){
+      if(textEdit && textDirty){showMessage("Unsaved changes: Fn+S save",Screen::Viewer);return;}
+      textEdit=false;screen=Screen::Files;draw();return;
+    }
+    if(k.fn && typed(k,'s') && textEdit){showMessage(saveText()?"Saved":"Save failed",Screen::Viewer);return;}
+    if(!textEdit && typed(k,'e')){textEdit=true;textCursor=0;draw();return;}
+    if(!textEdit && typed(k,'f')){textFind="";screen=Screen::EditorSearch;draw();return;}
+    if(textEdit){
+      if(left && textCursor>0)--textCursor;
+      else if(right && textCursor<(int)textBuffer.length())++textCursor;
+      else if(up || down){
+        int lineStart=textBuffer.lastIndexOf('\n',textCursor-1)+1;
+        int column=textCursor-lineStart;
+        if(up && lineStart>0){
+          int previousEnd=lineStart-1;
+          int previousStart=textBuffer.lastIndexOf('\n',previousEnd-1)+1;
+          textCursor=previousStart+std::min(column,previousEnd-previousStart);
+        }else if(down){
+          int next=textBuffer.indexOf('\n',textCursor);
+          if(next>=0){
+            int nextStart=next+1;
+            int nextEnd=textBuffer.indexOf('\n',nextStart);
+            if(nextEnd<0)nextEnd=textBuffer.length();
+            textCursor=nextStart+std::min(column,nextEnd-nextStart);
+          }
+        }
+      }else if(k.del && textCursor>0){textBuffer.remove(--textCursor,1);textDirty=true;}
+      else if(k.enter && textBuffer.length()<8192){
+        textBuffer=textBuffer.substring(0,textCursor)+"\n"+textBuffer.substring(textCursor);
+        ++textCursor;textDirty=true;
+      }else if(!k.fn)for(char c:k.word)if(c>=32&&c<=126&&textBuffer.length()<8192){
+        textBuffer=textBuffer.substring(0,textCursor)+String(c)+textBuffer.substring(textCursor);
+        ++textCursor;textDirty=true;
+      }
+      int cursorLine=0;
+      for(int i=0;i<textCursor;++i)if(textBuffer[i]=='\n')++cursorLine;
+      if(cursorLine<textTop)textTop=cursorLine;
+      if(cursorLine>=textTop+6)textTop=cursorLine-5;
+    } else {
+      if(up && textTop>0)--textTop;
+      if(down && textTop<1000)++textTop;
+    }
+    draw();return;
+  } else if(screen==Screen::EditorSearch) {
+    if(escape){screen=Screen::Viewer;draw();return;}
+    if(k.enter){
+      int pos=textBuffer.indexOf(textFind);
+      if(pos>=0 && textFind.length()){
+        textTop=0;
+        for(int i=0;i<pos;++i)if(textBuffer[i]=='\n')++textTop;
+      }
+      screen=Screen::Viewer;draw();return;
+    }
+    if(k.del&&textFind.length())textFind.remove(textFind.length()-1);
+    else if(!k.fn)for(char c:k.word)if(c>=32&&c<=126&&textFind.length()<40)textFind+=c;
+    draw();return;
   } else if(screen==Screen::Disk) {
     if(up||down) diskIndex=1-diskIndex;
     if(k.enter) {
@@ -1240,6 +1451,8 @@ void setup() {
   IrSender.begin(DISABLE_LED_FEEDBACK);
   IrSender.setSendPin(IR_TX_PIN);
   sdReady=mountSd();
+  readSettings();applySettings();autoConnectWifi();
+  lastInteraction=millis();
   sdCheckAt=millis()+SD_CHECK_INTERVAL;
   USB.onEvent(usbEvent);
   // Register MSC and begin native USB at boot so an already-connected
@@ -1268,18 +1481,23 @@ void setup() {
 }
 void loop() {
   M5Cardputer.update();
+  startNtp();
+  if(sleepMinutes>0 && (uint32_t)(millis()-lastInteraction)>(uint32_t)sleepMinutes*60000UL)
+    M5Cardputer.Display.setBrightness(0);
   // G0 is globally handled BEFORE all tool-specific keyboard processing.
   if(M5Cardputer.BtnA.wasPressed()) {
     if (usbActive) {
       if ((!usbConnected || usbEjected) && !usbWriting) {stopUsb();goHome();}
       else drawUsb();
     } else goHome();
-    waitingKeyRelease=true;
+    lastInteraction=millis();applySettings();waitingKeyRelease=true;
   }
   if(M5Cardputer.BtnA.wasReleased()) waitingKeyRelease=false;
   if(waitingKeyRelease) {delay(5);return;}
-  if(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed())
+  if(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+    lastInteraction=millis();applySettings();
     handleKeys(M5Cardputer.Keyboard.keysState());
+  }
   if(screen==Screen::WifiConnecting) {
     wl_status_t state=WiFi.status();
     if(state==WL_CONNECTED) showWifiConnectionResult(true);
