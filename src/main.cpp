@@ -10,6 +10,7 @@
 #include <USBMSC.h>
 #include <tusb.h>
 #include <WiFi.h>
+#include <WebServer.h>
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
 #include <lwip/netdb.h>
@@ -28,7 +29,7 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting, About, Settings, Editor, EditorSearch };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting, About, Settings, Editor, EditorSearch, HttpFiles };
 enum class Action { None, Mkdir, Rename, Delete, NewText };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -55,11 +56,17 @@ static size_t scanSelection = 0, scanScroll = 0;
 static String scanStatus;
 static bool bleInitialized = false;
 static int netMenuIndex=0;
+static WebServer httpFiles(80);
+static bool httpRunning=false,httpUploadFailed=false;
+static String httpPassword,httpUploadPath;
+static File httpUploadFile;
+static uint32_t httpRequests=0;
 static bool netPingMode=false;
 static int netTool=0;
 static size_t netResultScroll=0;
 static String netTarget, netOutput;
 static String netDefaultTarget="8.8.8.8";
+static void startHttpFiles();
 static void drawNetworkMenu();
 static void drawNetworkInfo();
 static void drawNetworkInput();
@@ -784,10 +791,25 @@ static void drawIrRemote() {
 }
 static void drawNetworkMenu() {
   header("NETWORK");
-  const char* options[]={"Network info","DNS lookup","Ping","TCP port scan","LAN scanner"};
-  for(int i=0;i<5;++i)line(23+i*18,options[i],i==netMenuIndex);
+  const char* options[]={"Network info","DNS lookup","Ping","TCP port scan","LAN scanner","HTTP File Server"};
+  for(int i=0;i<6;++i)line(22+i*16,options[i],i==netMenuIndex);
   if(WiFi.status()!=WL_CONNECTED)line(101,"WiFi not connected",false,WARN);
   footer("W/S select Enter  B/G0 back");
+}
+static void drawHttpFiles(){
+  header("HTTP FILES");
+  line(24,"Server running",false,ACCENT);
+  line(42,"http://"+WiFi.localIP().toString());
+  line(61,"User: m5knife");
+  line(78,"Pass: "+httpPassword,false,ACCENT);
+  line(96,"Requests: "+String(httpRequests));
+  footer("G0 / B stop server");
+}
+static void stopHttpFiles(){
+  if(!httpRunning)return;
+  if(httpUploadFile){httpUploadFile.close();SD.remove(httpUploadPath.c_str());}
+  httpFiles.stop();
+  httpRunning=false;
 }
 static void drawNetworkInfo() {
   header("NETWORK INFO");
@@ -1131,6 +1153,7 @@ static void draw() {
     case Screen::Message: drawMessage(); break;
     case Screen::Wifi: drawScan(true); break;
     case Screen::Network: drawNetworkMenu(); break;
+    case Screen::HttpFiles: drawHttpFiles(); break;
     case Screen::NetInfo: drawNetworkInfo(); break;
     case Screen::NetInput: drawNetworkInput(); break;
     case Screen::NetResult: drawNetworkResult(); break;
@@ -1146,7 +1169,7 @@ static void draw() {
     case Screen::WifiConnecting: drawWifiConnecting(); break;
   }
 }
-static void goHome() { if(screen==Screen::WifiConnecting) WiFi.disconnect(false,false); wifiPassword=""; screen=Screen::Home; action=Action::None; draw(); }
+static void goHome() { if(httpRunning)stopHttpFiles(); if(screen==Screen::WifiConnecting) WiFi.disconnect(false,false); wifiPassword=""; screen=Screen::Home; action=Action::None; draw(); }
 static void openFiles() { if (!sdReady) mountSd(); cwd="/"; scanDir(); screen=Screen::Files; draw(); }
 static void showMessage(const String& s, Screen back=Screen::Files) {
   message=s; returnScreen=back; screen=Screen::Message; draw();
@@ -1240,9 +1263,10 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::Network) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && netMenuIndex>0)--netMenuIndex;
-    if(down && netMenuIndex<4)++netMenuIndex;
+    if(down && netMenuIndex<5)++netMenuIndex;
     if(k.enter){
       if(netMenuIndex==0){screen=Screen::NetInfo;draw();return;}
+      if(netMenuIndex==5){startHttpFiles();return;}
       netTool=netMenuIndex;
       netPingMode=(netTool==2);
       if(netTool==4){
@@ -1256,6 +1280,10 @@ static void handleKeys(const Keys& k) {
 
       screen=Screen::NetInput;draw();return;
     }
+  } else if(screen==Screen::HttpFiles){
+    if(escape||backspace||typed(k,'b')){stopHttpFiles();screen=Screen::Network;draw();return;}
+    if(typed(k,'r'))drawHttpFiles();
+    return;
   } else if(screen==Screen::NetInfo) {
     if(escape||backspace||typed(k,'b')||k.enter){screen=Screen::Network;draw();return;}
   } else if(screen==Screen::NetInput) {
@@ -1492,6 +1520,10 @@ void setup() {
 void loop() {
   M5Cardputer.update();
   startNtp();
+  if(httpRunning){
+    if(WiFi.status()!=WL_CONNECTED){stopHttpFiles();showMessage("HTTP server stopped: WiFi lost",Screen::Home);}
+    else httpFiles.handleClient();
+  }
   if(sleepMinutes>0 && (uint32_t)(millis()-lastInteraction)>(uint32_t)sleepMinutes*60000UL)
     M5Cardputer.Display.setBrightness(0);
   // G0 is globally handled BEFORE all tool-specific keyboard processing.
