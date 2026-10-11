@@ -1070,7 +1070,7 @@ static void httpDownload(){
   const bool inlineView=httpFiles.arg("view")=="1" && mime;
   httpFiles.sendHeader("X-Content-Type-Options","nosniff");
   httpFiles.sendHeader("Content-Disposition",
-    String(inlineView?"inline":"attachment")+"; filename=\\\""+name+"\\\"");
+    String(inlineView?"inline":"attachment")+"; filename=\""+name+"\"");
   httpFiles.streamFile(f,inlineView?mime:"application/octet-stream");
   f.close();
 }
