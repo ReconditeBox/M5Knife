@@ -811,6 +811,199 @@ static void stopHttpFiles(){
   httpFiles.stop();
   httpRunning=false;
 }
+static bool httpValidPath(const String& path){
+  if(!path.startsWith("/")||path.length()>180||path.indexOf('\\')>=0)return false;
+  String part="";
+  for(size_t i=1;i<=path.length();++i){
+    char c=i<path.length()?path[i]:'/';
+    if(c=='/'){
+      if(part=="."||part==".."||part.length()>100)return false;
+      part="";
+    }else{
+      if((unsigned char)c<32||c==':'||c=='*'||c=='?'||c=='<'||c=='>'||c=='|'||c=='"')return false;
+      part+=c;
+    }
+  }
+  return true;
+}
+static bool httpValidName(const String& name){
+  return name.length()>0 && name.length()<=80 && name!="." && name!=".." &&
+    name.indexOf('/')<0 && httpValidPath("/"+name);
+}
+static String httpChild(const String& parent,const String& name){
+  return parent=="/"?"/"+name:parent+"/"+name;
+}
+static String httpEscape(const String& input){
+  String out;
+  for(char c:input){
+    if(c=='&')out+="&amp;";
+    else if(c=='<')out+="&lt;";
+    else if(c=='>')out+="&gt;";
+    else if(c=='"')out+="&quot;";
+    else if(c=='\'')out+="&#39;";
+    else out+=c;
+  }
+  return out;
+}
+static String httpUrlEncode(const String& input){
+  const char* hex="0123456789ABCDEF";String out;
+  for(unsigned char c:input){
+    if((c>='a'&&c<='z')||(c>='A'&&c<='Z')||
+       (c>='0'&&c<='9')||c=='-'||c=='_'||c=='.'||c=='~'||c=='/')
+      out+=(char)c;
+    else {out+='%';out+=hex[c>>4];out+=hex[c&15];}
+  }
+  return out;
+}
+static bool httpAuth(){
+  if(httpFiles.authenticate("m5knife",httpPassword.c_str()))return true;
+  httpFiles.requestAuthentication();
+  return false;
+}
+static String httpFolderArg(){
+  String path=httpFiles.hasArg("dir")?httpFiles.arg("dir"):"/";
+  return httpValidPath(path)?path:String("");
+}
+static void httpRedirect(const String& directory){
+  httpFiles.sendHeader("Location","/?dir="+httpUrlEncode(directory),true);
+  httpFiles.send(303,"text/plain","");
+}
+static void httpPage(){
+  if(!httpAuth())return;
+  ++httpRequests;
+  String dir=httpFolderArg();
+  if(dir.isEmpty()){httpFiles.send(400,"text/plain","Invalid path");return;}
+  File folder=SD.open(dir.c_str(),FILE_READ);
+  if(!folder||!folder.isDirectory()){if(folder)folder.close();httpFiles.send(404,"text/plain","Directory not found");return;}
+  String html=R"HTML(<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>M5Knife Files</title><style>body{font:16px sans-serif;background:#08130d;color:#e6f5e8;max-width:900px;margin:auto;padding:18px}a{color:#57e88a}h1{color:#57e88a}table{width:100%;border-collapse:collapse}td{border-bottom:1px solid #235038;padding:8px}button,input{background:#123320;color:white;border:1px solid #409b64;padding:7px;margin:2px}form{display:inline}small{color:#9fc6ae}</style></head><body><h1>M5Knife / SD</h1>)HTML";
+  html+="<p>Folder: "+httpEscape(dir)+"</p>";
+  html+="<p><small>Total "+String((uint32_t)(SD.cardSize()/1048576ULL))+" MiB &bull; Used "+
+    String((uint32_t)(SD.usedBytes()/1048576ULL))+" MiB</small></p>";
+  if(dir!="/"){
+    int last=dir.lastIndexOf('/');
+    String parent=last<=0?"/":dir.substring(0,last);
+    html+="<p><a href='/?dir="+httpUrlEncode(parent)+"'>.. Parent directory</a></p>";
+  }
+  html+="<table>";
+  File item=folder.openNextFile();
+  while(item){
+    String name=String(item.name());
+    int slash=name.lastIndexOf('/');if(slash>=0)name=name.substring(slash+1);
+    if(httpValidName(name)){
+      String path=httpChild(dir,name),encoded=httpUrlEncode(path);
+      html+="<tr><td>";
+      if(item.isDirectory())html+="<a href='/?dir="+encoded+"'>[DIR] "+httpEscape(name)+"</a>";
+      else html+="<a href='/download?path="+encoded+"'>"+httpEscape(name)+"</a> ("+String((uint32_t)item.size())+" B)";
+      html+="</td><td><form action='/rename' method='post'><input type='hidden' name='path' value='"+
+        httpEscape(path)+"'><input name='name' placeholder='New name' required maxlength='80'><button>Rename</button></form>";
+      html+="<form action='/delete' method='post' onsubmit='return confirm(\"Delete this item?\")'><input type='hidden' name='path' value='"+
+        httpEscape(path)+"'><button>Delete</button></form></td></tr>";
+    }
+    item.close();item=folder.openNextFile();
+  }
+  folder.close();
+  html+="</table><h3>Upload</h3><form action='/upload?dir="+httpUrlEncode(dir)+
+        "' method='post' enctype='multipart/form-data'><input type='file' name='file' required><button>Upload</button></form>";
+  html+="<h3>New folder</h3><form action='/mkdir' method='post'><input type='hidden' name='dir' value='"+
+        httpEscape(dir)+"'><input name='name' placeholder='Folder name' maxlength='80' required><button>Create</button></form>";
+  html+="<p><small>Server only runs while HTTP File Server is open on the Cardputer.</small></p></body></html>";
+  httpFiles.send(200,"text/html; charset=utf-8",html);
+}
+static void httpDownload(){
+  if(!httpAuth())return;
+  String path=httpFiles.arg("path");
+  if(!httpValidPath(path)||path=="/"){httpFiles.send(400,"text/plain","Invalid path");return;}
+  File f=SD.open(path.c_str(),FILE_READ);
+  if(!f||f.isDirectory()){if(f)f.close();httpFiles.send(404,"text/plain","File not found");return;}
+  String name=path.substring(path.lastIndexOf('/')+1);
+  name.replace("\"","_");
+  httpFiles.sendHeader("Content-Disposition","attachment; filename=\""+name+"\"");
+  httpFiles.streamFile(f,"application/octet-stream");
+  f.close();
+}
+static void httpMkdir(){
+  if(!httpAuth())return;
+  String dir=httpFolderArg(),name=httpFiles.arg("name");
+  if(dir.isEmpty()||!httpValidName(name)){httpFiles.send(400,"text/plain","Invalid folder");return;}
+  String path=httpChild(dir,name);
+  if(SD.exists(path.c_str())||!SD.mkdir(path.c_str())){httpFiles.send(409,"text/plain","Cannot create folder");return;}
+  httpRedirect(dir);
+}
+static void httpRename(){
+  if(!httpAuth())return;
+  String oldPath=httpFiles.arg("path"),name=httpFiles.arg("name");
+  if(!httpValidPath(oldPath)||oldPath=="/"||!httpValidName(name)){
+    httpFiles.send(400,"text/plain","Invalid rename");return;
+  }
+  int last=oldPath.lastIndexOf('/');
+  String parent=last<=0?"/":oldPath.substring(0,last);
+  String dest=httpChild(parent,name);
+  if(!SD.exists(oldPath.c_str())||SD.exists(dest.c_str())||
+     !SD.rename(oldPath.c_str(),dest.c_str())){httpFiles.send(409,"text/plain","Rename failed");return;}
+  httpRedirect(parent);
+}
+static void httpDelete(){
+  if(!httpAuth())return;
+  String path=httpFiles.arg("path");
+  if(!httpValidPath(path)||path=="/"){httpFiles.send(400,"text/plain","Invalid path");return;}
+  File f=SD.open(path.c_str(),FILE_READ);
+  if(!f){httpFiles.send(404,"text/plain","Not found");return;}
+  bool directory=f.isDirectory();f.close();
+  bool ok=directory?SD.rmdir(path.c_str()):SD.remove(path.c_str());
+  if(!ok){httpFiles.send(409,"text/plain","Delete failed (folder must be empty)");return;}
+  int last=path.lastIndexOf('/');
+  httpRedirect(last<=0?"/":path.substring(0,last));
+}
+static void httpUploadData(){
+  if(!httpFiles.authenticate("m5knife",httpPassword.c_str())){httpUploadFailed=true;return;}
+  HTTPUpload& upload=httpFiles.upload();
+  if(upload.status==UPLOAD_FILE_START){
+    httpUploadFailed=true;
+    String dir=httpFolderArg();
+    String name=upload.filename;
+    // Reject directory separators rather than trusting multipart filenames.
+    if(dir.isEmpty()||!httpValidName(name))return;
+    String path=httpChild(dir,name);
+    if(SD.exists(path.c_str()))return; // No silent overwrites.
+    httpUploadPath=path;
+    httpUploadFile=SD.open(path.c_str(),FILE_WRITE);
+    httpUploadFailed=!httpUploadFile;
+  }else if(upload.status==UPLOAD_FILE_WRITE){
+    if(!httpUploadFailed && httpUploadFile &&
+       httpUploadFile.write(upload.buf,upload.currentSize)!=upload.currentSize)
+       httpUploadFailed=true;
+  }else if(upload.status==UPLOAD_FILE_END || upload.status==UPLOAD_FILE_ABORTED){
+    if(httpUploadFile)httpUploadFile.close();
+    if(httpUploadFailed||upload.status==UPLOAD_FILE_ABORTED){
+      if(httpUploadPath.length())SD.remove(httpUploadPath.c_str());
+      httpUploadFailed=true;
+    }
+  }
+}
+static void httpUploadDone(){
+  if(!httpAuth())return;
+  if(httpUploadFailed){httpFiles.send(409,"text/plain","Upload failed or file exists");return;}
+  String dir=httpFolderArg();httpRedirect(dir.length()?dir:"/");
+}
+static void startHttpFiles(){
+  if(WiFi.status()!=WL_CONNECTED){showMessage("Connect to WiFi first",Screen::Network);return;}
+  if(usbActive || (!sdReady && !mountSd())){showMessage("SD unavailable",Screen::Network);return;}
+  // New password on each launch, shown only on the Cardputer's display.
+  char password[9];snprintf(password,sizeof(password),"%08lu",(unsigned long)(esp_random()%100000000UL));
+  httpPassword=password;
+  httpRequests=0;httpUploadFailed=false;httpUploadPath="";
+  httpFiles.on("/",HTTP_GET,httpPage);
+  httpFiles.on("/download",HTTP_GET,httpDownload);
+  httpFiles.on("/mkdir",HTTP_POST,httpMkdir);
+  httpFiles.on("/rename",HTTP_POST,httpRename);
+  httpFiles.on("/delete",HTTP_POST,httpDelete);
+  httpFiles.on("/upload",HTTP_POST,httpUploadDone,httpUploadData);
+  httpFiles.onNotFound([](){httpFiles.send(404,"text/plain","Not found");});
+  httpFiles.begin();
+  httpRunning=true;
+  screen=Screen::HttpFiles;draw();
+}
+
 static void drawNetworkInfo() {
   header("NETWORK INFO");
   if(WiFi.status()!=WL_CONNECTED) {
