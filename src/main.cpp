@@ -47,7 +47,7 @@ static bool bleInitialized = false;
 static int netMenuIndex=0;
 static bool netPingMode=false;
 static int netTool=0;
-static String netClientEndpoint, netClientPayload;
+static size_t netResultScroll=0;
 static String netTarget, netOutput;
 static String netDefaultTarget="8.8.8.8";
 static void drawNetworkMenu();
@@ -631,8 +631,8 @@ static void drawIrRemote() {
 }
 static void drawNetworkMenu() {
   header("NETWORK");
-  const char* options[]={"Network info","DNS lookup","Ping","TCP port scan","LAN scanner","TCP client"};
-  for(int i=0;i<6;++i)line(23+i*16,options[i],i==netMenuIndex);
+  const char* options[]={"Network info","DNS lookup","Ping","TCP port scan","LAN scanner"};
+  for(int i=0;i<5;++i)line(23+i*18,options[i],i==netMenuIndex);
   if(WiFi.status()!=WL_CONNECTED)line(101,"WiFi not connected",false,WARN);
   footer("W/S select Enter  B/G0 back");
 }
@@ -652,21 +652,24 @@ static void drawNetworkInfo() {
   footer("Enter/B back G0 home");
 }
 static void drawNetworkInput() {
-  header(netTool==2?"PING HOST":netTool==1?"DNS LOOKUP":netTool==3?"TCP PORT SCAN":netTool==5?"TCP CLIENT":"TCP SEND");
-  line(27,netTool==3?"Host (common ports):":netTool==5?"Host:port":netTool==6?"Text to send:":"Address or hostname:",false,ACCENT);
+  header(netTool==2?"PING HOST":netTool==1?"DNS LOOKUP":netTool==3?"TCP PORT SCAN":"LAN RANGE");
+  line(27,netTool==4?"StartIP-EndIP:":netTool==3?"Host (common ports):":"Address or hostname:",false,ACCENT);
   line(51,netTarget.length()>35?netTarget.substring(netTarget.length()-35):netTarget);
   footer("Enter run  Del delete Fn+\x60 cancel");
 }
 static void drawNetworkResult() {
-  header(netTool==2?"PING RESULT":netTool==1?"DNS RESULT":netTool==3?"PORT RESULTS":netTool==4?"LAN RESULTS":"TCP RESULT");
-  int y=23,pos=0;
-  while(pos<(int)netOutput.length() && y<115){
+  header(netTool==2?"PING RESULT":netTool==1?"DNS RESULT":netTool==3?"PORT RESULTS":"LAN RESULTS");
+  size_t pos=0, row=0; int y=23;
+  while(pos<netOutput.length() && y<=108){
     int end=netOutput.indexOf('\n',pos);
     if(end<0)end=netOutput.length();
-    line(y,netOutput.substring(pos,end).substring(0,38));
-    pos=end+1;y+=15;
+    if(row++>=netResultScroll){
+      line(y,netOutput.substring(pos,end).substring(0,38));
+      y+=14;
+    }
+    pos=end+1;
   }
-  footer("Enter/B back G0 home");
+  footer("W/S scroll  B back  G0 home");
 }
 static uint16_t netChecksum(const uint8_t *p,size_t len){
   uint32_t sum=0;
@@ -694,61 +697,56 @@ static void netPortScan(){
   }
   if(!opened)netOutput+="No listed ports open";
 }
+static uint32_t netIpNumber(IPAddress ip){
+  return ((uint32_t)ip[0]<<24)|((uint32_t)ip[1]<<16)|((uint32_t)ip[2]<<8)|ip[3];
+}
+static IPAddress netIpAddress(uint32_t value){
+  return IPAddress((uint8_t)(value>>24),(uint8_t)(value>>16),(uint8_t)(value>>8),(uint8_t)value);
+}
 static void netLanScan(){
-  IPAddress local=WiFi.localIP(),mask=WiFi.subnetMask();
-  // First 32 neighbours only, on /24 or smaller networks.
-  if(mask[0]!=255 || mask[1]!=255 || mask[2]!=255 || mask[3]!=0){
-    netOutput="LAN scan requires /24 mask";return;
+  int separator=netTarget.indexOf('-');
+  if(separator<0){netOutput="Use startIP-endIP";return;}
+  IPAddress from,to;
+  if(!from.fromString(netTarget.substring(0,separator)) ||
+     !to.fromString(netTarget.substring(separator+1))){
+    netOutput="Invalid IPv4 range";return;
   }
-  netOutput="LAN: "+String(local[0])+"."+String(local[1])+"."+String(local[2])+".0/24\n";
+  uint32_t first=netIpNumber(from),last=netIpNumber(to);
+  if(last<first || (uint64_t)last-first+1>256){
+    netOutput="Select 1 to 256 addresses";return;
+  }
+  netOutput="Active hosts:\n";
+  const uint16_t ports[]={21,22,23,53,80,139,443,445,3389,8080};
   int found=0;
-  // TCP discovery detects only hosts accepting one of these ports.
-  for(int last=1;last<=32;++last){
-    IPAddress ip(local[0],local[1],local[2],last);
-    if(ip==local)continue;
-    WiFiClient client;
-    bool responsive=client.connect(ip,80,75);
-    client.stop();
-    if(!responsive) responsive=client.connect(ip,443,75);
-    client.stop();
-    if(responsive){netOutput+=ip.toString()+"\n";++found;}
+  for(uint32_t number=first;;++number){
+    IPAddress ip=netIpAddress(number);
+    String openPorts;
+    // A device is considered active only if a TCP connect succeeds.
+    // Silent devices or filtered ports cannot be discovered this way.
+    for(uint16_t port:ports){
+      WiFiClient client;
+      bool open=client.connect(ip,port,60);
+      client.stop();
+      if(open){
+        if(openPorts.length())openPorts+=",";
+        openPorts+=String(port);
+      }
+    }
+    if(openPorts.length()){
+      netOutput+=ip.toString()+"\n  TCP: "+openPorts+"\n";
+      ++found;
+    }
+    if(number==last)break;
     delay(1);
   }
-  if(!found)netOutput+="No TCP hosts found (1-32)";
-}
-static void netTcpClient(){
-  int colon=netClientEndpoint.lastIndexOf(':');
-  if(colon<=0){netOutput="Use host:port";return;}
-  String host=netClientEndpoint.substring(0,colon);
-  String portText=netClientEndpoint.substring(colon+1);
-  if(portText.length()==0 || portText.length()>5){netOutput="Invalid port";return;}
-  for(char c:portText)if(c<'0'||c>'9'){netOutput="Invalid port";return;}
-  int port=portText.toInt();
-  if(port<1||port>65535){netOutput="Port out of range";return;}
-  IPAddress ip;
-  if(!netResolve(host,ip)){netOutput="DNS failed";return;}
-  WiFiClient client;
-  if(!client.connect(ip,(uint16_t)port,1500)){netOutput="Connection failed";return;}
-  netOutput="Connected: "+ip.toString()+":"+String(port)+"\n";
-  if(netTarget.length())client.print(netTarget+"\r\n");
-  uint32_t start=millis();size_t total=0;
-  while((uint32_t)(millis()-start)<1600 && total<350){
-    while(client.available() && total<350){
-      char c=(char)client.read();++total;
-      if(c=='\r')continue;
-      if(c=='\n'||(c>=32&&c<=126))netOutput+=c;
-    }
-    delay(10);
-  }
-  client.stop();
-  if(!total)netOutput+="(No reply)";
+  if(!found)netOutput+="None found (TCP only)";
 }
 static void runNetworkQuery(){
   netOutput="";
   if(WiFi.status()!=WL_CONNECTED)netOutput="Connect to WiFi first.";
   else if(netTool==4)netLanScan();
   else if(netTool==3)netPortScan();
-  else if(netTool==6)netTcpClient();
+
   else if(netTarget.isEmpty())netOutput="Enter a host.";
   else{
     IPAddress address;
@@ -793,6 +791,7 @@ static void runNetworkQuery(){
       }
     }
   }
+  netResultScroll=0;
   screen=Screen::NetResult;draw();
 }
 
@@ -991,13 +990,20 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::Network) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && netMenuIndex>0)--netMenuIndex;
-    if(down && netMenuIndex<5)++netMenuIndex;
+    if(down && netMenuIndex<4)++netMenuIndex;
     if(k.enter){
       if(netMenuIndex==0){screen=Screen::NetInfo;draw();return;}
       netTool=netMenuIndex;
       netPingMode=(netTool==2);
-      if(netTool==4){runNetworkQuery();return;}
-      netTarget=netTool==2?netDefaultTarget:netTool==3?WiFi.gatewayIP().toString():netTool==5?WiFi.gatewayIP().toString()+":80":"";
+      if(netTool==4){
+        IPAddress ip=WiFi.localIP(),mask=WiFi.subnetMask();
+        uint32_t base=netIpNumber(ip)&netIpNumber(mask);
+        uint32_t broadcast=base|(~netIpNumber(mask));
+        uint32_t first=base+1,last=broadcast>base+1?broadcast-1:base+1;
+        if((uint64_t)last-first+1>256)last=first+255;
+        netTarget=netIpAddress(first).toString()+"-"+netIpAddress(last).toString();
+      } else netTarget=netTool==2?netDefaultTarget:netTool==3?WiFi.gatewayIP().toString():"";
+
       screen=Screen::NetInput;draw();return;
     }
   } else if(screen==Screen::NetInfo) {
@@ -1005,7 +1011,6 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::NetInput) {
     if(escape){screen=Screen::Network;draw();return;}
     if(k.enter){
-      if(netTool==5){netClientEndpoint=netTarget;netTarget="";netTool=6;draw();return;}
       runNetworkQuery();return;
     }
     if(k.del){if(netTarget.length())netTarget.remove(netTarget.length()-1);}
@@ -1013,6 +1018,8 @@ static void handleKeys(const Keys& k) {
       if(c>=33 && c<=126 && netTarget.length()<63)netTarget+=c;
   } else if(screen==Screen::NetResult) {
     if(escape||backspace||typed(k,'b')||k.enter){screen=Screen::Network;draw();return;}
+    if(up && netResultScroll>0)--netResultScroll;
+    if(down && netResultScroll<200)++netResultScroll;
   } else if(screen==Screen::Infrared) {
     if(escape||backspace||typed(k,'b')) {goHome();return;}
     if(up && irMenuIndex>0)--irMenuIndex;
