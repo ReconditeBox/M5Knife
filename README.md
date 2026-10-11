@@ -62,3 +62,7 @@ This version registers USB MSC when the firmware boots so Windows can enumerate 
 ## USB diagnostics
 
 The USB screen now reports whether MSC registration succeeded, whether the USB device stack started, whether a USB host mounted the device, and the SD logical-sector count. These are *diagnostics*, not proof of a working removable drive. If Windows cannot see a drive, check Device Manager as well as Disk Management; do not initialise or format an unexpected drive. USB Mass Storage remains experimental.
+
+## Display behaviour
+
+The main launcher uses partial icon-strip redraws when moving selection, avoiding a full-screen clear on each navigation keypress. Other screens still use full redraws and may be optimised separately.
