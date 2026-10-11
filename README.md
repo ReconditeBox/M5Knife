@@ -92,11 +92,14 @@ In WiFi, scan networks and highlight an SSID using W/S. Enter selects it; an enc
 
 ## WiFi credentials on SD (experimental)
 
-From the WiFi scan screen: **P** saves the currently connected SSID and its most recently entered password to `/wifi.conf` in the SD card root; **L** loads that file and connects to the stored network. Format:
+The SD card root `/wifi.conf` holds up to 16 network credentials as unencrypted plaintext, using numbered pairs and blank lines between networks:
 
 ```ini
-SSID=MyNetwork
-PASSWORD=MyPassword
+SSID1=MyNetwork
+PASS1=MyPassword
+
+SSID2=Guest Network
+PASS2=another-password
 ```
 
-The file is **unencrypted plaintext** and can be read by anyone with the SD card or USB mass-storage access. P overwrites any existing file. Save only after the connection succeeds; loaded credentials can be saved again. SD access is blocked while USB MSC owns the card. This branch has not yet been compiled or tested on hardware.
+From the WiFi scan screen, highlight a network and press **L** to load that network's saved credentials and connect. Press **P** after successfully connecting with an entered password to add the network or update its existing password. Other stored networks are retained; the file is rewritten with consecutive numbers. **D** disconnects; **R** rescans. SSID/password values retain spaces, punctuation and equals signs. An SD card containing credentials must be kept secure: all passwords are readable by anyone who obtains the card or accesses it through USB MSC. Never use SD filesystem operations while USB MSC owns the card. This branch requires compilation and hardware testing.
