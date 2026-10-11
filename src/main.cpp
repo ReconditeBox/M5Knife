@@ -381,24 +381,6 @@ static bool configReplaceSection(const String& name,const String& body){
   }
   return configWriteAtomic(original);
 }
-static void migrateLegacyConfig(){
-  if(!sdReady||usbActive)return;
-  String mainData;
-  bool haveMain=configReadFile(CONFIG_FILE,mainData);
-  if(haveMain&&mainData.indexOf("[SETTINGS]")>=0)return;
-  String merged="[SETTINGS]\n";
-  if(haveMain)merged+=mainData;
-  else merged+="AUTO_WIFI=1\nNTP=1\nBRIGHTNESS=128\nSLEEP_MIN=0\nTZ_HOURS=0\n";
-  if(!merged.endsWith("\n"))merged+="\n";
-  String legacy;
-  if(configReadFile("/WIFI.CFG",legacy))merged+="\n[WIFI]\n"+legacy+"\n";
-  if(configReadFile("/IR.CFG",legacy)){
-    // Legacy IR.CFG already contains a [REMOTE] header.
-    merged+="\n"+legacy+"\n";
-  }
-  merged+="\n[HTTPD]\nUSERNAME=m5knife\nPASSWORD=1234\n";
-  configWriteAtomic(merged);
-}
 // [WIFI] in /M5KNIFE.CFG uses SSID1/PASS1, SSID2/PASS2, etc.
 // Preserve spaces and punctuation in values; no trimming or comment parsing.
 struct WifiRecord { String ssid, pass; };
@@ -1931,7 +1913,7 @@ void setup() {
   IrSender.begin(DISABLE_LED_FEEDBACK);
   IrSender.setSendPin(IR_TX_PIN);
   sdReady=mountSd();
-  migrateLegacyConfig();readSettings();applySettings();autoConnectWifi();
+  readSettings();applySettings();autoConnectWifi();
   lastInteraction=millis();
   sdCheckAt=millis()+SD_CHECK_INTERVAL;
   USB.onEvent(usbEvent);
