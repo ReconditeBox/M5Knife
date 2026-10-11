@@ -868,45 +868,167 @@ static void httpRedirect(const String& directory){
   httpFiles.sendHeader("Location","/?dir="+httpUrlEncode(directory),true);
   httpFiles.send(303,"text/plain","");
 }
+static String httpJsonQuote(const String& value){
+  String out="\"";
+  for(unsigned char c:value){
+    if(c=='"'||c=='\\'){out+='\\';out+=(char)c;}
+    else if(c=='\n')out+="\\n";
+    else if(c=='\r')out+="\\r";
+    else if(c<32){char temp[7];snprintf(temp,sizeof(temp),"\\u%04x",(unsigned)c);out+=temp;}
+    else out+=(char)c;
+  }
+  return out+"\"";
+}
+static void httpTree(){
+  if(!httpAuth())return;
+  String dir=httpFolderArg();
+  if(dir.isEmpty()){httpFiles.send(400,"application/json","[]");return;}
+  File folder=SD.open(dir.c_str(),FILE_READ);
+  if(!folder||!folder.isDirectory()){
+    if(folder)folder.close();
+    httpFiles.send(404,"application/json","[]");return;
+  }
+  String result="[";
+  File item=folder.openNextFile();
+  int count=0;
+  while(item && count<128){
+    if(item.isDirectory()){
+      String name=String(item.name());
+      int slash=name.lastIndexOf('/');if(slash>=0)name=name.substring(slash+1);
+      if(httpValidName(name)){
+        if(count++)result+=",";
+        result+="{\"name\":"+httpJsonQuote(name)+",\"path\":"+httpJsonQuote(httpChild(dir,name))+"}";
+      }
+    }
+    item.close();item=folder.openNextFile();
+  }
+  folder.close();
+  result+="]";
+  httpFiles.send(200,"application/json; charset=utf-8",result);
+}
 static void httpPage(){
   if(!httpAuth())return;
   ++httpRequests;
   String dir=httpFolderArg();
   if(dir.isEmpty()){httpFiles.send(400,"text/plain","Invalid path");return;}
   File folder=SD.open(dir.c_str(),FILE_READ);
-  if(!folder||!folder.isDirectory()){if(folder)folder.close();httpFiles.send(404,"text/plain","Directory not found");return;}
-  String html=R"HTML(<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>M5Knife Files</title><style>body{font:16px sans-serif;background:#08130d;color:#e6f5e8;max-width:900px;margin:auto;padding:18px}a{color:#57e88a}h1{color:#57e88a}table{width:100%;border-collapse:collapse}td{border-bottom:1px solid #235038;padding:8px}button,input{background:#123320;color:white;border:1px solid #409b64;padding:7px;margin:2px}form{display:inline}small{color:#9fc6ae}</style></head><body><h1>M5Knife / SD</h1>)HTML";
-  html+="<p>Folder: "+httpEscape(dir)+"</p>";
-  html+="<p><small>Total "+String((uint32_t)(SD.cardSize()/1048576ULL))+" MiB &bull; Used "+
-    String((uint32_t)(SD.usedBytes()/1048576ULL))+" MiB</small></p>";
-  if(dir!="/"){
-    int last=dir.lastIndexOf('/');
-    String parent=last<=0?"/":dir.substring(0,last);
-    html+="<p><a href='/?dir="+httpUrlEncode(parent)+"'>.. Parent directory</a></p>";
+  if(!folder||!folder.isDirectory()){
+    if(folder)folder.close();
+    httpFiles.send(404,"text/plain","Directory not found");return;
   }
-  html+="<table>";
+  String html=R"HTML(<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>M5Knife File Server</title><style>
+:root{color-scheme:dark}*{box-sizing:border-box}
+body{margin:0;background:#0a1118;color:#e3ebed;font:14px system-ui,Arial,sans-serif}
+header{height:65px;display:flex;align-items:center;gap:20px;padding:0 22px;border-bottom:1px solid #253743;background:#101d25}
+.brand{color:#63e6a0;font-size:24px;font-weight:700}.sub{color:#9baeba;font-size:17px}
+.layout{display:grid;grid-template-columns:265px minmax(0,1fr);min-height:calc(100vh - 65px)}
+aside{background:#101b23;border-right:1px solid #253743;padding:18px 12px;overflow:auto}
+main{padding:20px;min-width:0}.card{border:1px solid #293c48;border-radius:8px;background:#111e27}
+.muted{color:#a2b3bd}.capacity{height:9px;background:#273944;border-radius:8px;margin:10px 0;overflow:hidden}
+.capacity>div{background:#46c88b;height:100%}
+.tree{margin:10px 0;padding:0;list-style:none}.tree ul{padding-left:18px;margin:3px 0;list-style:none}
+.tree li{padding:2px 0}.node{display:flex;align-items:center;gap:5px}
+.toggle{border:0;background:none;color:#a4b9c7;cursor:pointer;width:24px;padding:3px;font-size:13px}
+.folder{color:#e7bb62}.tree a{padding:6px 5px;text-decoration:none;color:#d9e7e9;border-radius:4px;flex:1;overflow-wrap:anywhere}
+.tree a.current{background:#184b3b;color:#78f0b1}
+.path{padding:13px;margin-bottom:14px;color:#c5d9e0;overflow-wrap:anywhere}
+a{color:#65e8aa}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+button,.btn,input{font:inherit;border:1px solid #415765;border-radius:5px;background:#1a2933;color:#e4eff1;padding:8px 11px}
+button,.btn{cursor:pointer}.primary{background:#16864f;border-color:#29b977;color:white}
+input{max-width:180px}.toolbar form{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+table{width:100%;border-collapse:collapse}th,td{padding:12px;border-bottom:1px solid #263743;text-align:left}
+th{background:#1b2a35;color:#b5c6cd}td.actions{min-width:190px}td.actions form{display:inline-flex;margin:2px;gap:4px;align-items:center}
+td.actions input{width:112px}tbody tr:hover{background:#152a32}
+.file{color:#e5edf0;text-decoration:none}.filename{overflow-wrap:anywhere}.tiny{font-size:12px}
+@media(max-width:750px){.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #253743}main{padding:12px}td.actions{min-width:0}table{font-size:12px}th,td{padding:7px}}
+</style></head><body><header><div class="brand">M5Knife</div><span class="sub">HTTP File Server</span></header>
+<div class="layout"><aside><b>▣ SD Card</b>)HTML";
+  const uint64_t capacity=SD.cardSize(),used=SD.usedBytes();
+  html+="<p class='muted'>"+String((uint32_t)(used/1048576ULL))+" / "+String((uint32_t)(capacity/1048576ULL))+" MiB used</p>";
+  html+="<div class='capacity'><div style='width:"+String(capacity?(unsigned)(used*100/capacity):0)+"%'></div></div>";
+  html+=R"HTML(<b>Folders</b><ul class="tree" id="folderTree"><li><div class="node"><button class="toggle" type="button" id="rootToggle" aria-label="Expand root">▸</button><span class="folder">📁</span><a href="/?dir=%2F" id="rootLink">SD card /</a></div><ul id="rootChildren" hidden></ul></li></ul>
+<p class="muted tiny">Click a triangle to expand a branch; click a name to open it.</p></aside><main>)HTML";
+  html+="<div class='card path'>▱ SD card "+httpEscape(dir)+"</div>";
+  html+="<div class='toolbar'><form action='/upload?dir="+httpUrlEncode(dir)+
+    "' method='post' enctype='multipart/form-data'><input type='file' name='file' required><button class='primary'>↑ Upload</button></form>";
+  html+="<form action='/mkdir' method='post'><input type='hidden' name='dir' value='"+httpEscape(dir)+
+    "'><input name='name' placeholder='New folder' maxlength='80' required><button>+ New folder</button></form>";
+  html+="<a class='btn' href='/?dir="+httpUrlEncode(dir)+"'>↻ Refresh</a></div>";
+  if(dir!="/"){
+    int last=dir.lastIndexOf('/');String parent=last<=0?"/":dir.substring(0,last);
+    html+="<p><a href='/?dir="+httpUrlEncode(parent)+"'>↑ Parent directory</a></p>";
+  }
+  html+="<div class='card'><table><thead><tr><th>Name</th><th>Size</th><th>Actions</th></tr></thead><tbody>";
   File item=folder.openNextFile();
-  while(item){
-    String name=String(item.name());
-    int slash=name.lastIndexOf('/');if(slash>=0)name=name.substring(slash+1);
+  int count=0;
+  while(item && count<256){
+    String name=String(item.name());int slash=name.lastIndexOf('/');
+    if(slash>=0)name=name.substring(slash+1);
     if(httpValidName(name)){
-      String path=httpChild(dir,name),encoded=httpUrlEncode(path);
-      html+="<tr><td>";
-      if(item.isDirectory())html+="<a href='/?dir="+encoded+"'>[DIR] "+httpEscape(name)+"</a>";
-      else html+="<a href='/download?path="+encoded+"'>"+httpEscape(name)+"</a> ("+String((uint32_t)item.size())+" B)";
-      html+="</td><td><form action='/rename' method='post'><input type='hidden' name='path' value='"+
-        httpEscape(path)+"'><input name='name' placeholder='New name' required maxlength='80'><button>Rename</button></form>";
-      html+="<form action='/delete' method='post' onsubmit='return confirm(\"Delete this item?\")'><input type='hidden' name='path' value='"+
+      ++count;
+      String path=httpChild(dir,name),url=httpUrlEncode(path);
+      html+="<tr><td class='filename'>";
+      if(item.isDirectory())html+="📁 <a class='file' href='/?dir="+url+"'>"+httpEscape(name)+"</a>";
+      else html+="▤ <a class='file' href='/download?path="+url+"'>"+httpEscape(name)+"</a>";
+      html+="</td><td class='muted'>";
+      if(item.isDirectory())html+="—";
+      else html+=String((uint32_t)item.size())+" B";
+      html+="</td><td class='actions'>";
+      if(!item.isDirectory())html+="<a href='/download?path="+url+"'>↓ Download</a> ";
+      html+="<form action='/rename' method='post'><input type='hidden' name='path' value='"+
+        httpEscape(path)+"'><input name='name' placeholder='Rename to...' required maxlength='80'><button>Rename</button></form>";
+      html+="<form action='/delete' method='post' onsubmit='return confirm(\"Delete selected item?\")'><input type='hidden' name='path' value='"+
         httpEscape(path)+"'><button>Delete</button></form></td></tr>";
     }
     item.close();item=folder.openNextFile();
   }
   folder.close();
-  html+="</table><h3>Upload</h3><form action='/upload?dir="+httpUrlEncode(dir)+
-        "' method='post' enctype='multipart/form-data'><input type='file' name='file' required><button>Upload</button></form>";
-  html+="<h3>New folder</h3><form action='/mkdir' method='post'><input type='hidden' name='dir' value='"+
-        httpEscape(dir)+"'><input name='name' placeholder='Folder name' maxlength='80' required><button>Create</button></form>";
-  html+="<p><small>Server only runs while HTTP File Server is open on the Cardputer.</small></p></body></html>";
+  html+="</tbody></table></div><p class='muted tiny'>"+String(count)+" items • Full file management available while server is running</p></main></div>";
+  html+=R"HTML(<script>
+const selected=new URLSearchParams(location.search).get('dir')||'/';
+const root=document.getElementById('rootChildren');
+const rootToggle=document.getElementById('rootToggle');
+const rootLink=document.getElementById('rootLink');
+if(selected==='/')rootLink.classList.add('current');
+function node(label,path){
+ const li=document.createElement('li'),div=document.createElement('div');
+ div.className='node';
+ const toggle=document.createElement('button');toggle.className='toggle';toggle.type='button';toggle.textContent='▸';
+ const icon=document.createElement('span');icon.className='folder';icon.textContent='📁';
+ const link=document.createElement('a');link.textContent=label;link.href='/?dir='+encodeURIComponent(path);
+ if(path===selected)link.classList.add('current');
+ const children=document.createElement('ul');children.hidden=true;
+ toggle.onclick=()=>expand(path,children,toggle);
+ div.append(toggle,icon,link);li.append(div,children);return {li,children,toggle};
+}
+async function expand(path,ul,button){
+ if(!ul.hidden){ul.hidden=true;button.textContent='▸';return;}
+ if(!ul.dataset.loaded){
+  button.textContent='…';
+  try{
+   const response=await fetch('/tree?dir='+encodeURIComponent(path));
+   if(!response.ok)throw Error('Cannot load folders');
+   const folders=await response.json();
+   for(const folder of folders){const item=node(folder.name,folder.path);ul.append(item.li);}
+   ul.dataset.loaded='1';
+  }catch(e){button.textContent='!';return;}
+ }
+ ul.hidden=false;button.textContent='▾';
+}
+(async()=>{
+ await expand('/',root,rootToggle);
+ let current='',parts=selected.split('/').filter(Boolean);
+ for(const part of parts){
+   current+='/'+part;
+   const link=Array.from(document.querySelectorAll('.tree a')).find(a=>decodeURIComponent(new URL(a.href).searchParams.get('dir')||'/')===current);
+   if(!link)break;
+   const li=link.closest('li');
+   const children=li.querySelector(':scope > ul'),button=li.querySelector(':scope > .node > .toggle');
+   if(children&&button)await expand(current,children,button);
+ }
+})();
+</script></body></html>)HTML";
   httpFiles.send(200,"text/html; charset=utf-8",html);
 }
 static void httpDownload(){
@@ -994,6 +1116,7 @@ static void startHttpFiles(){
   httpRequests=0;httpUploadFailed=false;httpUploadPath="";
   if(!httpRoutesRegistered){
   httpFiles.on("/",HTTP_GET,httpPage);
+  httpFiles.on("/tree",HTTP_GET,httpTree);
   httpFiles.on("/download",HTTP_GET,httpDownload);
   httpFiles.on("/mkdir",HTTP_POST,httpMkdir);
   httpFiles.on("/rename",HTTP_POST,httpRename);
