@@ -77,3 +77,11 @@ The launcher redraw optimisation has been reverted pending USB regression testin
 ## Status screen
 
 Shows the WiFi SSID and IPv4 address only when connected (otherwise `Not connected`), plus the WiFi station MAC address and Bluetooth controller MAC address. `R` refreshes the values, `B` or G0 returns to the launcher. Viewing Status does not connect to WiFi or pair with Bluetooth.
+
+## USB MSC performance diagnostics (test branch)
+
+This isolated branch instruments the raw SD read/write callbacks without changing their transfer logic. The USB screen shows total reads/writes, failed requests, count of callbacks taking >=100ms, and maximum read/write callback time in milliseconds. Press `R` to refresh counters. Use a **spare** SD card and test Windows detection only; do not run format, repair, or write-speed tests until the results are inspected. G0 still requires host ejection or disconnection. These diagnostics are not validated by a local compile; do not merge until hardware testing confirms that build and USB access work.
+
+## USB attachment timing experiment
+
+The `fix/usb-msc-performance` branch now **electrically detaches the USB device after the USB stack starts**. Selecting USB checks that the SD card is ready, sets MSC media-present, and then calls TinyUSB `tud_connect()` to advertise a ready drive to Windows. After Windows safe-eject (or USB disconnection), G0 calls `tud_disconnect()` before withdrawing media. This is an experimental change; initial USB enumeration during device boot and Windows driver caching may still influence timing. The USB callback latency counters remain on-screen; press `R` to refresh them. Test on a disposable card and do not merge into `main` until Windows recognises storage quickly, Explorer remains responsive, file reads work, and safe ejection works. 

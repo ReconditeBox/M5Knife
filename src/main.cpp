@@ -4,6 +4,7 @@
 #include <SD.h>
 #include <USB.h>
 #include <USBMSC.h>
+#include <tusb.h>
 #include <WiFi.h>
 #include <esp_system.h>
 #include <BLEDevice.h>
@@ -81,42 +82,73 @@ static USBMSC msc;
 static bool usbActive = false;
 static bool usbConfigured = false;
 static bool usbStarted = false;
+static bool usbPhysicallyAttached = false;
 static volatile bool usbSuspended = false;
 static uint32_t usbSectorCount = 0;
 static uint8_t probeSector[512];
+// Callback counters are inspected only on the USB screen.
+// Use critical sections because USB callbacks run in another task.
+static portMUX_TYPE mscStatsMux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t mscReads=0, mscWrites=0, mscErrors=0;
+static uint32_t mscSlowReads=0, mscSlowWrites=0, mscMaxReadMs=0, mscMaxWriteMs=0;
+static void recordMSC(bool write, uint32_t elapsed, bool success) {
+  portENTER_CRITICAL(&mscStatsMux);
+  if (write) {
+    ++mscWrites;
+    if (elapsed > mscMaxWriteMs) mscMaxWriteMs=elapsed;
+    if (elapsed >= 100) ++mscSlowWrites;
+  } else {
+    ++mscReads;
+    if (elapsed > mscMaxReadMs) mscMaxReadMs=elapsed;
+    if (elapsed >= 100) ++mscSlowReads;
+  }
+  if (!success) ++mscErrors;
+  portEXIT_CRITICAL(&mscStatsMux);
+}
+
 static volatile bool usbEjected = false, usbConnected = false, usbWriting = false;
 static uint32_t sdCheckAt = 0;
 static constexpr uint32_t SD_CHECK_INTERVAL = 2500;
 // MSC callbacks run in the USB task, never access the FAT filesystem while active.
 static int32_t mscRead(uint32_t lba, uint32_t offset, void* buffer, uint32_t size) {
-  const uint32_t count = usbSectorCount;
-  if (!usbActive || !count || offset >= 512 || (uint64_t)lba*512+offset+size > (uint64_t)count*512) return -1;
-  uint8_t sector[512];
-  uint8_t* out = (uint8_t*)buffer;
-  uint32_t pos = 0;
-  while (pos < size) {
-    uint32_t n = lba + (offset+pos)/512, off = (offset+pos)%512;
-    uint32_t bytes = std::min(512U-off, size-pos);
-    if (!SD.readRAW(sector,n)) return -1;
-    memcpy(out+pos,sector+off,bytes); pos += bytes;
+  const uint32_t startMs=millis();
+  const uint32_t count=usbSectorCount;
+  bool ok=usbActive && count && offset<512 &&
+    (uint64_t)lba*512+offset+size <= (uint64_t)count*512;
+  if (ok) {
+    uint8_t sector[512], *out=(uint8_t*)buffer;
+    uint32_t pos=0;
+    while (pos<size) {
+      uint32_t n=lba+(offset+pos)/512, off=(offset+pos)%512;
+      uint32_t bytes=std::min(512U-off,size-pos);
+      if (!SD.readRAW(sector,n)) {ok=false;break;}
+      memcpy(out+pos,sector+off,bytes);
+      pos+=bytes;
+    }
   }
-  return (int32_t)size;
+  recordMSC(false,millis()-startMs,ok);
+  return ok ? (int32_t)size : -1;
 }
 static int32_t mscWrite(uint32_t lba, uint32_t offset, uint8_t* buffer, uint32_t size) {
-  const uint32_t count = usbSectorCount;
-  if (!usbActive || !count || offset >= 512 || (uint64_t)lba*512+offset+size > (uint64_t)count*512) return -1;
-  usbWriting = true;
-  uint8_t sector[512]; uint32_t pos = 0;
-  while (pos < size) {
-    uint32_t n = lba + (offset+pos)/512, off = (offset+pos)%512;
-    uint32_t bytes = std::min(512U-off,size-pos);
-    if ((off || bytes != 512) && !SD.readRAW(sector,n)) {usbWriting=false; return -1;}
-    memcpy(sector+off,buffer+pos,bytes);
-    if (!SD.writeRAW(sector,n)) {usbWriting=false; return -1;}
-    pos += bytes;
+  const uint32_t startMs=millis();
+  const uint32_t count=usbSectorCount;
+  bool ok=usbActive && count && offset<512 &&
+    (uint64_t)lba*512+offset+size <= (uint64_t)count*512;
+  if (ok) {
+    usbWriting=true;
+    uint8_t sector[512];uint32_t pos=0;
+    while(pos<size) {
+      uint32_t n=lba+(offset+pos)/512,off=(offset+pos)%512;
+      uint32_t bytes=std::min(512U-off,size-pos);
+      if ((off || bytes!=512) && !SD.readRAW(sector,n)) {ok=false;break;}
+      memcpy(sector+off,buffer+pos,bytes);
+      if (!SD.writeRAW(sector,n)) {ok=false;break;}
+      pos+=bytes;
+    }
+    usbWriting=false;
   }
-  usbWriting = false;
-  return (int32_t)size;
+  recordMSC(true,millis()-startMs,ok);
+  return ok ? (int32_t)size : -1;
 }
 static bool mscStartStop(uint8_t, bool start, bool eject) {
   if (eject && !start) usbEjected = true;
@@ -319,20 +351,35 @@ static void drawDisk() {
   footer("Up/Down  Enter  G0 home");
 }
 static void drawUsb() {
-  header("USB");
-  line(27, "USB SD-card reader", false, ACCENT);
-  if (!usbActive) { line(48, "No SD card mounted", false, WARN); footer("G0 main menu"); return; }
-  line(42, String("MSC: ") + (usbConfigured ? "READY" : "FAILED"), false, usbConfigured ? ACCENT : WARN);
-  line(57, String("USB: ") + (usbStarted ? "STARTED" : "FAILED"), false, usbStarted ? ACCENT : WARN);
-  line(72, String("Host: ") + ((bool)USB ? "MOUNTED" : (usbSuspended ? "SUSPENDED" : "NOT MOUNTED")));
-  line(87, String("Sectors: ") + String(usbSectorCount));
-  line(102, usbEjected ? "Ejected - G0 to leave" : "Eject in Windows before G0", false, WARN);
-  footer("USB diagnostics / G0 after eject");
+  header("USB TEST");
+  if (!usbActive) {
+    line(28,"SD media not active",false,WARN);
+    footer("G0 main menu");
+    return;
+  }
+  uint32_t reads,writes,errors,slowR,slowW,maxR,maxW;
+  portENTER_CRITICAL(&mscStatsMux);
+  reads=mscReads; writes=mscWrites; errors=mscErrors;
+  slowR=mscSlowReads;slowW=mscSlowWrites;
+  maxR=mscMaxReadMs;maxW=mscMaxWriteMs;
+  portEXIT_CRITICAL(&mscStatsMux);
+  line(22,String("USB: ")+(usbPhysicallyAttached?"ATTACHED":"DETACHED"),false,ACCENT);
+  line(36,String("Reads: ")+String(reads)+"  Writes: "+String(writes));
+  line(50,String("Errors: ")+String(errors),false,errors?WARN:FG);
+  line(64,String("Slow R/W: ")+String(slowR)+"/"+String(slowW));
+  line(78,String("Max R: ")+String(maxR)+"ms");
+  line(92,String("Max W: ")+String(maxW)+"ms");
+  line(106,usbEjected?"Ejected":"Eject before G0",false,WARN);
+  footer("R refresh   G0 after eject");
 }
 static void draw();
 static void stopUsb() {
   // USB stays enumerated. The host must eject the drive before G0 can
   // withdraw its media; on re-entry Windows sees fresh media.
+  // Remove the whole USB device before withdrawing the media.
+  tud_disconnect();
+  usbPhysicallyAttached = false;
+  delay(80); // Allow USB task to service the detach before unmount.
   msc.mediaPresent(false);
   usbActive = false;
   usbEjected = false;
@@ -345,9 +392,16 @@ static void startUsb() {
   if (SD.sectorSize()!=512 || SD.numSectors()==0) {screen=Screen::Usb;draw();return;}
   if (!usbConfigured || !usbStarted) {screen=Screen::Usb;draw();return;}
   usbSectorCount=SD.numSectors();
+  portENTER_CRITICAL(&mscStatsMux);
+  mscReads=mscWrites=mscErrors=0;
+  mscSlowReads=mscSlowWrites=mscMaxReadMs=mscMaxWriteMs=0;
+  portEXIT_CRITICAL(&mscStatsMux);
   usbEjected=false;
-  usbActive=true;
+  // Advertise ready media BEFORE the host can enumerate the drive.
   msc.mediaPresent(true);
+  usbActive=true;
+  tud_connect();
+  usbPhysicallyAttached=true;
   screen=Screen::Usb;draw();
 }
 static void drawInput() {
@@ -473,6 +527,9 @@ static void handleKeys(const Keys& k) {
     if (down && scanSelection+1<scanEntries.size()) ++scanSelection;
     if (scanSelection<scanScroll) scanScroll=scanSelection;
     if (scanSelection>=scanScroll+6) scanScroll=scanSelection-5;
+  } else if(screen==Screen::Usb) {
+    if (typed(k,'r')) {drawUsb();return;}
+    return;
   } else if(screen==Screen::Status) {
     if(escape||backspace||typed(k,'b')) {goHome();return;}
     if(typed(k,'r')) {drawStatus();return;}
@@ -544,7 +601,15 @@ void setup() {
   // Report a large enough logical unit; actual limits enforced in callbacks.
   usbSectorCount = sectors;
   usbConfigured = msc.begin(sectors ? sectors : 1048576, 512);
-  if (usbConfigured) usbStarted = USB.begin();
+  if (usbConfigured) {
+    usbStarted = USB.begin();
+    if (usbStarted) {
+      // Keep the device electrically detached until the SD card is
+      // ready and the user explicitly enters USB mode.
+      tud_disconnect();
+      usbPhysicallyAttached=false;
+    }
+  }
   draw();
 }
 void loop() {
