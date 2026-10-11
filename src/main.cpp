@@ -428,6 +428,7 @@ static void readSettings(){
 }
 static bool saveSettings(){
   if(!sdReady || usbActive)return false;
+  SD.remove("/M5KNIFE.CFG");
   File f=SD.open("/M5KNIFE.CFG",FILE_WRITE);if(!f)return false;
   f.println(String("AUTO_WIFI=")+(autoWifi?"1":"0"));
   f.println(String("NTP=")+(ntpEnabled?"1":"0"));
@@ -472,7 +473,7 @@ static void drawSettings(){
 static void settingsActivate(int delta){
   if(settingsIndex==0)autoWifi=!autoWifi;
   else if(settingsIndex==1){ntpEnabled=!ntpEnabled;ntpStarted=false;}
-  else if(settingsIndex==2)tzHours=constrain(tzHours+delta,-12,14);
+  else if(settingsIndex==2){tzHours=constrain(tzHours+delta,-12,14);ntpStarted=false;}
   else if(settingsIndex==3)brightness=constrain(brightness+delta*16,20,255);
   else if(settingsIndex==4)sleepMinutes=constrain(sleepMinutes+delta,0,60);
   else if(settingsIndex==5){showMessage(saveSettings()?"Settings saved":"SD unavailable",Screen::Settings);return;}
@@ -1019,8 +1020,8 @@ static void startUsb() {
   screen=Screen::Usb;draw();
 }
 static void drawInput() {
-  header(action==Action::Mkdir?"NEW FOLDER":"RENAME");
-  line(32, action==Action::Mkdir?"Folder name:":"New name:", false, ACCENT);
+  header(action==Action::Mkdir?"NEW FOLDER":action==Action::NewText?"NEW TEXT FILE":"RENAME");
+  line(32, action==Action::Mkdir?"Folder name:":action==Action::NewText?"File name:":"New name:", false, ACCENT);
   line(54, inputText.length()>33 ? inputText.substring(inputText.length()-33) : inputText);
   footer("Type  Enter OK  Fn+` cancel");
 }
@@ -1082,7 +1083,7 @@ static bool saveText(){
   size_t written=f.print(textBuffer);f.flush();f.close();
   if(written!=textBuffer.length()){SD.remove(temporary.c_str());return false;}
   SD.remove(backup.c_str());
-  if(!SD.rename(selectedPath.c_str(),backup.c_str()))return false;
+  if(!SD.rename(selectedPath.c_str(),backup.c_str())){SD.remove(temporary.c_str());return false;}
   if(!SD.rename(temporary.c_str(),selectedPath.c_str())){
     SD.rename(backup.c_str(),selectedPath.c_str());return false;
   }
