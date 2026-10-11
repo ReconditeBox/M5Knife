@@ -1,4 +1,8 @@
 #include <Arduino.h>
+#define DISABLE_CODE_FOR_RECEIVER
+#define SEND_PWM_BY_TIMER
+#define IR_TX_PIN 44
+#include <IRremote.hpp>
 #include <M5Cardputer.h>
 #include <SPI.h>
 #include <SD.h>
@@ -19,7 +23,7 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Bluetooth, Infrared, Status, WifiPassword, WifiConnecting };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting };
 enum class Action { None, Mkdir, Rename, Delete };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -36,6 +40,65 @@ static std::vector<ScanEntry> scanEntries;
 static size_t scanSelection = 0, scanScroll = 0;
 static String scanStatus;
 static bool bleInitialized = false;
+static int irMenuIndex=0, irEditField=0;
+static uint16_t irAddress=0;
+static uint8_t irCommand=0;
+static String irEditText, irNotice;
+static String irName="No IR profile";
+static uint16_t irProfileAddress=0;
+static bool irProfileLoaded=false;
+static int irRemoteSelection=0;
+static const char* const irButtonNames[]={"POWER","VOLUP","VOLDOWN","CHUP","CHDOWN","MUTE"};
+static uint8_t irButtonCommands[6]={};
+static bool irButtonPresent[6]={};
+static bool parseHexValue(String value,uint32_t& out,uint32_t limit) {
+  value.trim();
+  if(value.startsWith("0x") || value.startsWith("0X")) value.remove(0,2);
+  if(!value.length() || value.length()>8) return false;
+  uint32_t v=0;
+  for(char c:value) {
+    int n=(c>='0'&&c<='9')?c-'0':(c>='a'&&c<='f')?c-'a'+10:(c>='A'&&c<='F')?c-'A'+10:-1;
+    if(n<0) return false;
+    v=(v<<4)|n;
+  }
+  if(v>limit) return false;
+  out=v; return true;
+}
+static void irSend(uint16_t address,uint8_t command) {
+  IrSender.sendNEC(address,command,0);
+  irNotice="Sent NEC 0x"+String(address,HEX)+"/0x"+String(command,HEX);
+}
+static bool irLoadProfile() {
+  if(usbActive || (!sdReady && !mountSd())) {irNotice="SD not available";return false;}
+  File f=SD.open("/IR.CFG",FILE_READ);
+  if(!f) {irNotice="No /IR.CFG on SD";return false;}
+  String name="";uint32_t address=0;bool addressOk=false;
+  uint8_t commands[6]={};bool found[6]={};
+  bool inRemote=false,nec=false;
+  while(f.available()) {
+    String entry=f.readStringUntil('\n'); entry.trim();
+    if(entry=="[REMOTE]") {inRemote=true;continue;}
+    if(!inRemote || entry.isEmpty() || entry.startsWith("#") || entry.startsWith(";")) continue;
+    int equals=entry.indexOf('='); if(equals<0)continue;
+    String key=entry.substring(0,equals),value=entry.substring(equals+1);
+    key.trim();value.trim();
+    if(key=="NAME")name=value;
+    else if(key=="PROTOCOL")nec=value.equalsIgnoreCase("NEC");
+    else if(key=="ADDRESS")addressOk=parseHexValue(value,address,65535);
+    else for(int i=0;i<6;i++)if(key==irButtonNames[i]){
+      uint32_t v=0;
+      if(parseHexValue(value,v,255)){commands[i]=(uint8_t)v;found[i]=true;}
+    }
+  }
+  f.close();
+  if(!nec || !addressOk){irNotice="IR.CFG needs NEC/ADDRESS";return false;}
+  irName=name.length()?name:"IR remote";
+  irProfileAddress=(uint16_t)address;
+  for(int i=0;i<6;i++){irButtonCommands[i]=commands[i];irButtonPresent[i]=found[i];}
+  irProfileLoaded=true; irNotice="Loaded /IR.CFG";
+  return true;
+}
+
 static String wifiTarget, wifiPassword;
 static uint32_t wifiConnectStarted = 0;
 static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 18000;
@@ -501,6 +564,37 @@ static void drawStatus() {
   line(104, String("BT MAC: ")+hardwareAddress(ESP_MAC_BT));
   footer("R refresh  B back  G0 menu");
 }
+static void drawIrMenu() {
+  header("INFRARED");
+  line(26,"NEC IR transmitter - GPIO44",false,ACCENT);
+  const char* options[]={"Manual transmit","Remote control","Load SD profile","IR information"};
+  for(int i=0;i<4;++i) line(45+i*16,options[i],irMenuIndex==i);
+  footer("W/S select Enter  B/G0 back");
+}
+static void drawIrManual() {
+  header("IR TRANSMIT");
+  line(24,"Protocol: NEC",false,ACCENT);
+  line(43,"Address: 0x"+String(irAddress,HEX));
+  line(59,"Command: 0x"+String(irCommand,HEX));
+  line(77,irNotice.substring(0,35),false,MUTED);
+  footer("A addr C cmd Enter SEND B back");
+}
+static void drawIrEdit() {
+  header(irEditField==0?"IR ADDRESS":"IR COMMAND");
+  line(30,"Hex value:",false,ACCENT);
+  line(52,irEditText);
+  line(80,irEditField==0?"0x0000 to 0xFFFF":"0x00 to 0xFF",false,MUTED);
+  footer("Enter OK  Del erase  Fn+` back");
+}
+static void drawIrRemote() {
+  header("IR REMOTE");
+  line(21,irName.substring(0,30),false,ACCENT);
+  for(int i=0;i<6;++i) {
+    String name=String(irButtonNames[i])+(irButtonPresent[i]?"":" (unset)");
+    line(36+i*13,name,irRemoteSelection==i);
+  }
+  footer("W/S choose Enter send B back");
+}
 static void drawDisk() {
   header("FILES / DISK");
   line(29, "SD card operations", false, ACCENT);
@@ -612,11 +706,10 @@ static void draw() {
     case Screen::Message: drawMessage(); break;
     case Screen::Wifi: drawScan(true); break;
     case Screen::Bluetooth: drawScan(false); break;
-    case Screen::Infrared:
-      header("INFRARED");
-      line(43,"Infrared tools coming soon",false,ACCENT);
-      footer("G0 return to menu");
-      break;
+    case Screen::Infrared: drawIrMenu(); break;
+    case Screen::IrManual: drawIrManual(); break;
+    case Screen::IrEdit: drawIrEdit(); break;
+    case Screen::IrRemote: drawIrRemote(); break;
     case Screen::Status: drawStatus(); break;
     case Screen::WifiPassword: drawWifiPassword(); break;
     case Screen::WifiConnecting: drawWifiConnecting(); break;
@@ -688,6 +781,46 @@ static void handleKeys(const Keys& k) {
         case 6: break; // About: placeholder
       }
       return;
+    }
+  } else if(screen==Screen::Infrared) {
+    if(escape||backspace||typed(k,'b')) {goHome();return;}
+    if(up && irMenuIndex>0)--irMenuIndex;
+    if(down && irMenuIndex<3)++irMenuIndex;
+    if(k.enter){
+      if(irMenuIndex==0){screen=Screen::IrManual;irNotice="";draw();return;}
+      if(irMenuIndex==1){screen=Screen::IrRemote;irRemoteSelection=0;draw();return;}
+      if(irMenuIndex==2){irLoadProfile();draw();return;}
+      showMessage("IR TX: GPIO44\\nProtocol: NEC\\nProfiles: /IR.CFG\\nRX requires extra hardware",Screen::Infrared);return;
+    }
+  } else if(screen==Screen::IrManual) {
+    if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
+    if(typed(k,'a')||typed(k,'c')){
+      irEditField=typed(k,'a')?0:1;
+      irEditText=irEditField==0?String(irAddress,HEX):String(irCommand,HEX);
+      screen=Screen::IrEdit;draw();return;
+    }
+    if(k.enter){irSend(irAddress,irCommand);draw();return;}
+  } else if(screen==Screen::IrEdit) {
+    if(escape){screen=Screen::IrManual;draw();return;}
+    if(k.enter) {
+      uint32_t value=0;
+      if(parseHexValue(irEditText,value,irEditField==0?65535:255)){
+        if(irEditField==0)irAddress=(uint16_t)value;else irCommand=(uint8_t)value;
+        irNotice="Value updated";screen=Screen::IrManual;draw();return;
+      }
+      irNotice="Invalid hex";screen=Screen::IrManual;draw();return;
+    }
+    if(k.del && irEditText.length())irEditText.remove(irEditText.length()-1);
+    else if(!k.fn)for(char c:k.word)if(irEditText.length()<6 && ((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))irEditText+=c;
+  } else if(screen==Screen::IrRemote) {
+    if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
+    if(up && irRemoteSelection>0)--irRemoteSelection;
+    if(down && irRemoteSelection<5)++irRemoteSelection;
+    if(k.enter){
+      if(irProfileLoaded && irButtonPresent[irRemoteSelection])
+        irSend(irProfileAddress,irButtonCommands[irRemoteSelection]);
+      else irNotice="Load IR.CFG / code unset";
+      draw();return;
     }
   } else if(screen==Screen::WifiPassword) {
     if (escape) {wifiPassword="";screen=Screen::Wifi;draw();return;}
@@ -779,6 +912,8 @@ void setup() {
   M5Cardputer.Display.setFont(&fonts::Font0);
   M5Cardputer.Display.setTextSize(1);
   Serial.begin(115200);
+  IrSender.begin(DISABLE_LED_FEEDBACK);
+  IrSender.setSendPin(IR_TX_PIN);
   sdReady=mountSd();
   sdCheckAt=millis()+SD_CHECK_INTERVAL;
   USB.onEvent(usbEvent);
