@@ -224,6 +224,53 @@ static bool probeSd() {
   }
   return true;
 }
+// Plaintext credentials on SD root. Never touch SD while USB MSC owns it.
+static bool wifiConfigSdReady() {
+  if (usbActive) return false;
+  return sdReady ? probeSd() : mountSd();
+}
+static String wifiReadLine(File& f) {
+  String v=f.readStringUntil('\n');
+  if(v.endsWith("\r")) v.remove(v.length()-1);
+  return v;
+}
+static void saveWifiConfig() {
+  if(WiFi.status()!=WL_CONNECTED || WiFi.SSID()!=wifiTarget) {
+    scanStatus="Connect first, then P";draw();return;
+  }
+  if(!wifiConfigSdReady()) {scanStatus="SD card unavailable";draw();return;}
+  if(wifiTarget.isEmpty() || wifiTarget.length()>32 ||
+     wifiTarget.indexOf('\n')>=0 || wifiTarget.indexOf('\r')>=0 ||
+     wifiPassword.indexOf('\n')>=0 || wifiPassword.indexOf('\r')>=0) {
+    scanStatus="Invalid credentials";draw();return;
+  }
+  // Replace, never append.
+  SD.remove("/wifi.conf");
+  File file=SD.open("/wifi.conf",FILE_WRITE);
+  if(!file) {scanStatus="Cannot create wifi.conf";draw();return;}
+  String data=String("SSID=")+wifiTarget+"\nPASSWORD="+wifiPassword+"\n";
+  size_t n=file.print(data);
+  file.flush();file.close();
+  scanStatus=n==data.length() ? "Saved /wifi.conf (plaintext)" : "WiFi config write failed";
+  draw();
+}
+static void loadWifiConfig() {
+  if(!wifiConfigSdReady()) {scanStatus="SD card unavailable";draw();return;}
+  File file=SD.open("/wifi.conf",FILE_READ);
+  if(!file) {scanStatus="No /wifi.conf on SD";draw();return;}
+  String ssid=wifiReadLine(file), pass=wifiReadLine(file);
+  file.close();
+  if(!ssid.startsWith("SSID=") || !pass.startsWith("PASSWORD=")) {
+    scanStatus="Invalid wifi.conf format";draw();return;
+  }
+  ssid.remove(0,5);pass.remove(0,9);
+  if(ssid.isEmpty() || ssid.length()>32 || pass.length()>63) {
+    scanStatus="Invalid SSID/password";draw();return;
+  }
+  wifiTarget=ssid;wifiPassword=pass;
+  beginWifiConnection();
+}
+
 static void scanDir() {
   entries.clear(); selected=scrollPos=0;
   if (!sdReady) return;
@@ -327,13 +374,14 @@ static void drawWifiConnecting() {
 static void beginWifiConnection() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifiTarget.c_str(),wifiPassword.c_str());
-  wifiPassword = ""; // No credential stored by the toolkit.
+  // Hold credentials in RAM until explicitly saved or replaced.
   wifiConnectStarted=millis();
   screen=Screen::WifiConnecting;
   drawWifiConnecting();
 }
 static void showWifiConnectionResult(bool connected) {
   screen=Screen::Wifi;
+  if (!connected) wifiPassword="";
   scanStatus=connected ? String("Connected: ")+WiFi.localIP().toString() : "Connection failed / timed out";
   draw();
 }
@@ -353,7 +401,7 @@ static void drawScan(bool wifi) {
     label+=" "+String(e.rssi)+"dBm";
     line(36+row*13,label,n==scanSelection);
   }
-  footer(wifi ? "Enter join  D off  R scan  G0" : "W/S scroll  R rescan  B back");
+  footer(wifi ? "Enter join P save L load D off" : "W/S scroll  R rescan  B back");
 }
 static String hardwareAddress(esp_mac_type_t type) {
   uint8_t mac[6] = {0};
@@ -567,8 +615,11 @@ static void handleKeys(const Keys& k) {
     return;
   } else if(screen==Screen::Wifi || screen==Screen::Bluetooth) {
     if (escape||backspace||typed(k,'b')) {goHome();return;}
+    if (screen==Screen::Wifi && typed(k,'p')) {saveWifiConfig();return;}
+    if (screen==Screen::Wifi && typed(k,'l')) {loadWifiConfig();return;}
     if (screen==Screen::Wifi && typed(k,'d')) {
       WiFi.disconnect(false,false);
+      wifiPassword="";
       scanStatus="Disconnected";
       draw();return;
     }
