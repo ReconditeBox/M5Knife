@@ -169,3 +169,21 @@ The Status screen shows WiFi SSID and IPv4, WiFi/Bluetooth MAC addresses, SD tot
 - **Text editor:** The editor supports typing, deleting before the cursor, newline insertion, cursor navigation via Fn+cursor keys, and save using Fn+S. Edited files are saved using temporary/backup files. Unsaved changes block the normal editor exit; G0 can leave without saving. Edit only plain text files up to 8192 bytes. In Files, T creates a blank text file in the current directory, after which it can be opened and edited. This is a deliberately basic first version.
 
 This branch is **not yet compiled or hardware-tested**. Stable `main` remains at M5Knife 0.4.5 until test results are confirmed.
+
+## HTTP File Server (experimental)
+
+Open **Network > HTTP File Server** after connecting to WiFi and inserting an SD card. The Cardputer shows a local `http://<device-ip>/` URL and the username `m5knife` plus a newly generated eight-digit password for that session. Open the address in a browser on the same local network; authenticate using those credentials. HTTP uses TCP port 80.
+
+The web interface supports navigating SD folders, downloading files, uploading new files, creating folders, renaming items and deleting files or **empty** folders. Uploads do **not** overwrite existing files. File paths are checked to reject relative directory traversal and malformed names. The SD capacity and usage appear on the browser page.
+
+The server is started **only** in HTTP File Server mode, stopped with B or G0, and stopped if WiFi disconnects. USB mass storage remains a separate screen/mode and is not entered while HTTP File Server owns the SD filesystem.
+
+**Security:** This is HTTP, **not HTTPS**. The password is transmitted using HTTP Basic authentication and is not encrypted on the network. Only use this mode on trusted local networks, never expose port 80 to the internet or forward it through your router. Anyone with the login information and network access can read, change and delete SD files; keep backups. There is no guest/read-only role.
+
+This branch is not yet compiled or hardware-tested. Stable `main` is unchanged at M5Knife 0.4.6.
+
+### Two-pane web file manager (Stage 1)
+
+The browser interface now has a dark M5Knife-style header, an SD usage bar, a **collapsible folder tree** at left and a **file list** for the current directory at right. Click a triangle to expand/collapse a branch, or click its name to open it. Branch contents load on demand using `GET /tree?dir=...`; the server returns only directories in JSON. The current folder is highlighted in the tree, with its path displayed above the list. The Refresh button reloads the page.
+
+Existing upload, download, rename, delete and new-folder actions remain on the page. The file table shows name and size; modified timestamps are deliberately omitted pending reliable SD timestamp support. The browser page and file listing currently have a per-directory display cap (256 entries; folder branches 128), and large directories may use significant ESP32 memory when building the HTML page. Password credentials are unchanged (username `m5knife`, password `1234`). This experimental UI has not been compiled or hardware-tested yet.
