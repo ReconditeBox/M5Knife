@@ -533,75 +533,85 @@ static void scanDir() {
 }
 static void drawHome() {
   header("HOME");
-  auto& d = M5Cardputer.Display;
-  const char* labels[9] = {"FILES", "USB", "WIFI", "NETWORK", "BLUETOOTH", "INFRARED", "SETTINGS", "STATUS", "ABOUT"};
-  // Three visible tiles. Keep the selection centred where possible.
-  const int first = std::min(6, std::max(0, homeIndex - 1));
-  for (int slot = 0; slot < 3; ++slot) {
-    const int i = first + slot;
-    const int x = 8 + slot * 78;
-    const int y = 29;
-    const bool active = homeIndex == i;
-    const uint16_t fill = active ? SEL : 0x1082;
-    const uint16_t ink = active ? ACCENT : FG;
-    d.fillRoundRect(x, y, 68, 70, 5, fill);
-    d.drawRoundRect(x, y, 68, 70, 5, active ? ACCENT : MUTED);
-    const int cx = x + 34;
-    const int cy = y + 27;
-    if (i == 0) { // Folder
-      d.fillRoundRect(cx-14,cy-5,28,19,2,0xFFE0);
-      d.fillRect(cx-14,cy-9,13,6,0xFFE0);
-    } else if (i == 1) { // USB
-      d.drawLine(cx,cy-15,cx,cy+14,ink);
-      d.drawLine(cx,cy-15,cx-5,cy-10,ink);
-      d.drawLine(cx,cy-15,cx+5,cy-10,ink);
-      d.drawLine(cx,cy+2,cx-11,cy-5,ink);
-      d.fillCircle(cx-11,cy-5,2,ink);
-      d.drawLine(cx,cy+9,cx+10,cy+2,ink);
-      d.fillRect(cx+8,cy,5,5,ink);
-    } else if (i == 2) { // WiFi
-      d.drawArc(cx,cy+9,20,17,220,320,ink);
-      d.drawArc(cx,cy+9,13,10,220,320,ink);
-      d.fillCircle(cx,cy+8,3,ink);
-    } else if (i == 3) { // Network: interconnected nodes
-      d.drawLine(cx-11,cy+9,cx,cy-11,ink);
-      d.drawLine(cx,cy-11,cx+12,cy+9,ink);
-      d.drawLine(cx-11,cy+9,cx+12,cy+9,ink);
-      d.fillCircle(cx-11,cy+9,4,ink);
-      d.fillCircle(cx+12,cy+9,4,ink);
-      d.fillCircle(cx,cy-11,4,ink);
-    } else if (i == 4) { // Bluetooth
-      d.drawLine(cx,cy-15,cx,cy+15,ink);
-      d.drawLine(cx,cy-15,cx+10,cy-7,ink);
-      d.drawLine(cx+10,cy-7,cx-8,cy+8,ink);
-      d.drawLine(cx-8,cy-8,cx+10,cy+7,ink);
-      d.drawLine(cx+10,cy+7,cx,cy+15,ink);
-    } else if (i == 5) { // Infrared: emitter and signal waves
-      d.fillCircle(cx-9,cy,4,ink);
-      d.drawArc(cx-10,cy,11,9,300,60,ink);
-      d.drawArc(cx-10,cy,18,16,300,60,ink);
-    } else if (i == 6) { // Settings
-      d.drawCircle(cx,cy,11,ink);
-      d.drawCircle(cx,cy,4,ink);
-      for(int a=0;a<8;a++){
-        float angle=a*3.1415926f/4;
-        d.drawLine(cx+(int)(12*cos(angle)),cy+(int)(12*sin(angle)),
-                   cx+(int)(16*cos(angle)),cy+(int)(16*sin(angle)),ink);
-      }
-    } else if (i == 7) { // Status: gauge
-      d.drawCircle(cx,cy,13,ink);
-      d.drawLine(cx,cy,cx+7,cy-7,ink);
-      d.fillCircle(cx,cy,2,ink);
-    } else { // About: information symbol
-      d.drawCircle(cx,cy,13,ink);
-      d.fillCircle(cx,cy-7,2,ink);
-      d.drawLine(cx,cy-2,cx,cy+9,ink);
+  auto& d=M5Cardputer.Display;
+  const char* labels[9]={"FILES","USB","WIFI","NETWORK","BLUETOOTH","INFRARED","SETTINGS","STATUS","ABOUT"};
+  const uint16_t colors[9]={0xFDE0,0x07FF,0x07E0,0x07FF,0x4DFF,0xFB26,0xFFFF,0x07E0,0x4DFF};
+  // Three visible tiles; preserve existing scrolling and selection behaviour.
+  const int first=std::min(6,std::max(0,homeIndex-1));
+  for(int slot=0;slot<3;++slot){
+    const int i=first+slot,x=8+slot*78,y=29,cx=x+34,cy=y+27;
+    const bool active=homeIndex==i;
+    const uint16_t ink=colors[i],frame=active?ACCENT:0x2308,fill=active?0x0923:0x0841;
+    d.fillRoundRect(x,y,68,70,6,fill);
+    d.drawRoundRect(x,y,68,70,6,frame);
+    if(active){
+      d.drawRoundRect(x+2,y+2,64,66,5,0x0544);
+      d.drawFastHLine(x+12,y,44,ACCENT);
     }
-    d.setTextColor(ink, fill);
-    d.drawCenterString(labels[i], cx, y+53);
+    // Outline-only iconography, bold enough to survive a 240x135 display.
+    if(i==0){ // folder outline
+      d.drawRoundRect(cx-16,cy-8,32,23,3,ink);
+      d.drawLine(cx-16,cy-8,cx-12,cy-12,ink);
+      d.drawLine(cx-12,cy-12,cx-3,cy-12,ink);
+      d.drawLine(cx-3,cy-12,cx+2,cy-8,ink);
+      d.drawFastHLine(cx-12,cy-2,24,ink);
+    }else if(i==1){ // USB trident
+      d.drawLine(cx,cy-15,cx,cy+13,ink);
+      d.drawLine(cx,cy-15,cx-5,cy-9,ink);
+      d.drawLine(cx,cy-15,cx+5,cy-9,ink);
+      d.drawLine(cx,cy,cx-12,cy-7,ink);
+      d.drawCircle(cx-12,cy-7,3,ink);
+      d.drawLine(cx,cy+6,cx+12,cy-2,ink);
+      d.drawRect(cx+9,cy-5,6,6,ink);
+      d.drawCircle(cx,cy+14,2,ink);
+    }else if(i==2){ // WiFi signal
+      d.drawArc(cx,cy+9,23,20,220,320,ink);
+      d.drawArc(cx,cy+9,16,13,220,320,ink);
+      d.drawArc(cx,cy+9,9,7,220,320,ink);
+      d.fillCircle(cx,cy+9,3,ink);
+    }else if(i==3){ // wired network
+      d.drawLine(cx,cy-12,cx,cy-3,ink);
+      d.drawFastHLine(cx-13,cy-3,26,ink);
+      d.drawLine(cx-13,cy-3,cx-13,cy+9,ink);
+      d.drawLine(cx+13,cy-3,cx+13,cy+9,ink);
+      d.drawRoundRect(cx-5,cy-17,10,9,2,ink);
+      d.drawRoundRect(cx-18,cy+8,10,9,2,ink);
+      d.drawRoundRect(cx+8,cy+8,10,9,2,ink);
+    }else if(i==4){ // Bluetooth rune
+      d.drawLine(cx,cy-17,cx,cy+17,ink);
+      d.drawLine(cx,cy-17,cx+12,cy-7,ink);
+      d.drawLine(cx+12,cy-7,cx-11,cy+10,ink);
+      d.drawLine(cx-11,cy-10,cx+12,cy+7,ink);
+      d.drawLine(cx+12,cy+7,cx,cy+17,ink);
+    }else if(i==5){ // infrared waves
+      d.drawRoundRect(cx-18,cy-6,12,12,3,ink);
+      d.fillCircle(cx-12,cy,2,ink);
+      d.drawArc(cx-13,cy,16,12,315,45,ink);
+      d.drawArc(cx-13,cy,24,20,315,45,ink);
+    }else if(i==6){ // settings gear
+      d.drawCircle(cx,cy,12,ink);
+      d.drawCircle(cx,cy,5,ink);
+      for(int a=0;a<8;++a){
+        const float ang=a*3.1415926f/4;
+        d.drawLine(cx+(int)(12*cos(ang)),cy+(int)(12*sin(ang)),
+                   cx+(int)(17*cos(ang)),cy+(int)(17*sin(ang)),ink);
+      }
+    }else if(i==7){ // status graph bars
+      d.drawRect(cx-16,cy+3,7,12,ink);
+      d.drawRect(cx-3,cy-4,7,19,ink);
+      d.drawRect(cx+10,cy-13,7,28,ink);
+      d.drawFastHLine(cx-18,cy+17,37,ink);
+    }else{ // outlined info
+      d.drawCircle(cx,cy,14,ink);
+      d.fillCircle(cx,cy-8,2,ink);
+      d.drawFastVLine(cx,cy-2,11,ink);
+      d.drawFastHLine(cx-3,cy+9,7,ink);
+    }
+    d.setTextColor(active?ACCENT:FG,fill);
+    d.drawCenterString(labels[i],cx,y+53);
   }
-  d.setTextColor(MUTED, BG);
-  d.drawCenterString(String(homeIndex+1) + " / 9", 120, 104);
+  d.setTextColor(MUTED,BG);
+  d.drawCenterString(String(homeIndex+1)+" / 9",120,104);
   footer("A/D or arrows: scroll  Enter  G0");
 }
 static void drawFiles() {
