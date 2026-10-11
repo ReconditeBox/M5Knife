@@ -736,16 +736,17 @@ static void netLanScan(){
   }
   netOutput="Active hosts:\n";
   header("LAN SCANNING");
-  line(23,"Scanning selected range",false,ACCENT);
-  line(52,"Checking:",false,MUTED);
+  line(22,"Checking:",false,ACCENT);
+  line(52,"Active hosts / open ports:",false,MUTED);
+  footer("Results update during scan");
   const uint16_t ports[]={21,22,23,53,80,139,443,445,3389,8080};
   int found=0;
   for(uint32_t number=first;;++number){
     IPAddress ip=netIpAddress(number);
     String openPorts;
-    // Update just the progress area, keeping previous output off screen.
-    M5Cardputer.Display.fillRect(0,68,240,22,BG);
-    line(70,ip.toString(),false,ACCENT);
+    // The current address is transient; only responding hosts remain listed.
+    M5Cardputer.Display.fillRect(0,35,240,15,BG);
+    line(36,ip.toString(),false,ACCENT);
     // A device is considered active only if a TCP connect succeeds.
     // Silent devices or filtered ports cannot be discovered this way.
     for(uint16_t port:ports){
@@ -758,8 +759,14 @@ static void netLanScan(){
       }
     }
     if(openPorts.length()){
-      netOutput+=ip.toString()+"  "+openPorts+"\n";
+      String hostLine=ip.toString()+"  "+openPorts;
+      netOutput+=hostLine+"\n";
       ++found;
+      // Show the newest four discoveries immediately as the scan continues.
+      // Earlier hits remain in netOutput for scrolling on the results screen.
+      const int slot=(found-1)%4;
+      if(slot==0) M5Cardputer.Display.fillRect(0,65,240,54,BG);
+      line(67+slot*13,hostLine.substring(0,38));
     }
     if(number==last)break;
     delay(1);
