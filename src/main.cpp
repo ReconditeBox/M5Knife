@@ -1234,6 +1234,11 @@ void loop() {
       showWifiConnectionResult(false);
     }
   }
+  if((screen==Screen::Network || screen==Screen::NetInfo ||
+      screen==Screen::NetInput || screen==Screen::NetResult) &&
+      WiFi.status()!=WL_CONNECTED) {
+    showMessage("WiFi disconnected",Screen::Home);
+  }
   // Poll only on the launcher; never touch filesystem while host owns the SD.
   if (!usbActive && screen==Screen::Home && (int32_t)(millis()-sdCheckAt)>=0) {
     bool was=sdReady;
