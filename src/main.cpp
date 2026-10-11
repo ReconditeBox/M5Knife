@@ -716,11 +716,17 @@ static void netLanScan(){
     netOutput="Select 1 to 256 addresses";return;
   }
   netOutput="Active hosts:\n";
+  header("LAN SCANNING");
+  line(23,"Scanning selected range",false,ACCENT);
+  line(52,"Checking:",false,MUTED);
   const uint16_t ports[]={21,22,23,53,80,139,443,445,3389,8080};
   int found=0;
   for(uint32_t number=first;;++number){
     IPAddress ip=netIpAddress(number);
     String openPorts;
+    // Update just the progress area, keeping previous output off screen.
+    M5Cardputer.Display.fillRect(0,68,240,22,BG);
+    line(70,ip.toString(),false,ACCENT);
     // A device is considered active only if a TCP connect succeeds.
     // Silent devices or filtered ports cannot be discovered this way.
     for(uint16_t port:ports){
@@ -733,13 +739,14 @@ static void netLanScan(){
       }
     }
     if(openPorts.length()){
-      netOutput+=ip.toString()+"\n  TCP: "+openPorts+"\n";
+      netOutput+=ip.toString()+"  "+openPorts+"\n";
       ++found;
     }
     if(number==last)break;
     delay(1);
   }
   if(!found)netOutput+="None found (TCP only)";
+  // runNetworkQuery() draws the final results, removing scan progress.
 }
 static void runNetworkQuery(){
   netOutput="";
