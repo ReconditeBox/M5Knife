@@ -314,9 +314,8 @@ static void drawWifiPassword() {
   line(23, "Network:", false, ACCENT);
   line(38, wifiTarget.substring(0,34));
   line(57, "Password:", false, ACCENT);
-  String masked;
-  for (size_t i=0;i<wifiPassword.length();++i) masked+='*';
-  line(72, masked.substring(masked.length()>34?masked.length()-34:0));
+  // Deliberately show entered password characters, as requested.
+  line(72, wifiPassword.substring(wifiPassword.length()>34?wifiPassword.length()-34:0));
   footer("Enter connect  Fn+` cancel");
 }
 static void drawWifiConnecting() {
