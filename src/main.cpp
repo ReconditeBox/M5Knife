@@ -11,6 +11,7 @@
 #include <tusb.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Preferences.h>
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
 #include <lwip/netdb.h>
@@ -250,7 +251,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.4.9", 5, 5);
+  d.drawString("M5KNIFE 0.5.11", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -321,6 +322,44 @@ static bool probeSd() {
 }
 // Unified SD configuration. Old files are kept as migration backups.
 static const char* CONFIG_FILE="/M5KNIFE.CFG";
+static bool configWriteAtomic(const String& data);
+static bool configReadFile(const char* path,String& out);
+static String activeConfig;
+static bool nvsReady=false;
+static bool configStoreNvs(const String& data){
+  if(!nvsReady||data.length()>16384)return false;
+  Preferences prefs;
+  if(!prefs.begin("m5knife",false))return false;
+  size_t done=prefs.putBytes("config",data.c_str(),data.length()+1);
+  prefs.end();return done==data.length()+1;
+}
+static bool configLoadNvs(String& data){
+  if(!nvsReady)return false;
+  Preferences prefs;
+  if(!prefs.begin("m5knife",true))return false;
+  size_t count=prefs.getBytesLength("config");
+  if(count<2||count>16385){prefs.end();return false;}
+  std::vector<char> bytes(count);
+  size_t got=prefs.getBytes("config",bytes.data(),count);
+  prefs.end();if(got!=count||bytes.back()!=0)return false;
+  data=String(bytes.data());return data.length()==count-1;
+}
+static bool configApply(const String& data){
+  if(data.indexOf("[SETTINGS]")<0||data.indexOf("[HTTPD]")<0||data.length()>16384)return false;
+  if(!configStoreNvs(data))return false;
+  activeConfig=data;return true;
+}
+static bool configExportSd(){
+  if(usbActive||(!sdReady&&!mountSd()))return false;
+  return configWriteAtomic(activeConfig);
+}
+static bool configImportSd(){
+  if(usbActive||(!sdReady&&!mountSd()))return false;
+  String data;
+  if(!configReadFile(CONFIG_FILE,data))return false;
+  return configApply(data);
+}
+
 static String httpUsername="m5knife";
 static bool configReadFile(const char* path,String& out){
   File f=SD.open(path,FILE_READ);
@@ -365,9 +404,7 @@ static bool configWriteAtomic(const String& data){
   return true;
 }
 static bool configReplaceSection(const String& name,const String& body){
-  if(usbActive||!sdReady)return false;
-  String original;
-  if(!configReadFile(CONFIG_FILE,original))original="";
+  String original=activeConfig;
   String header="["+name+"]",replacement=header+"\n"+body;
   if(!replacement.endsWith("\n"))replacement+="\n";
   int pos=original.indexOf(header);
@@ -379,20 +416,19 @@ static bool configReplaceSection(const String& name,const String& body){
     if(original.length()&&!original.endsWith("\n"))original+="\n";
     original+=replacement;
   }
-  return configWriteAtomic(original);
+  return configApply(original);
 }
 // [WIFI] in /M5KNIFE.CFG uses SSID1/PASS1, SSID2/PASS2, etc.
 // Preserve spaces and punctuation in values; no trimming or comment parsing.
 struct WifiRecord { String ssid, pass; };
 static constexpr size_t MAX_WIFI_RECORDS=16;
 static bool wifiConfigSdReady() {
-  if (usbActive) return false;
-  return sdReady ? probeSd() : mountSd();
+  return nvsReady;
 }
 static bool readWifiRecords(std::vector<WifiRecord>& records) {
   records.clear();
   String data;
-  if(!configReadFile(CONFIG_FILE,data))return false;
+  data=activeConfig;
   String wifiBlock=configSection(data,"WIFI");
   if(wifiBlock.isEmpty())return true;
   size_t offset=0;
@@ -452,7 +488,7 @@ static void saveWifiConfig() {
     if(records.size()>=MAX_WIFI_RECORDS) {scanStatus="WiFi config full";draw();return;}
     records.push_back({wifiTarget,wifiPassword});
   }
-  scanStatus=writeWifiRecords(records) ? "Saved /M5KNIFE.CFG" : "Failed saving M5KNIFE.CFG";
+  scanStatus=writeWifiRecords(records) ? "WiFi saved in NVS" : "NVS save failed";
   draw();
 }
 static void loadWifiConfig() {
@@ -475,8 +511,8 @@ static void loadWifiConfig() {
 }
 
 static void readSettings(){
-  if(!sdReady||usbActive)return;
-  String data;if(!configReadFile(CONFIG_FILE,data))return;
+  String data=activeConfig;
+  if(data.isEmpty())return;
   String block=configSection(data,"SETTINGS");
   int offset=0;
   while(offset<(int)block.length()){
@@ -504,7 +540,6 @@ static void readSettings(){
   }
 }
 static bool saveSettings(){
-  if(!sdReady||usbActive)return false;
   String body=String("AUTO_WIFI=")+(autoWifi?"1":"0")+"\n"+
     "NTP="+(ntpEnabled?"1":"0")+"\n"+
     "BRIGHTNESS="+String(brightness)+"\n"+
@@ -522,7 +557,7 @@ static void startNtp(){
   }
 }
 static void autoConnectWifi(){
-  if(!autoWifi||!sdReady || usbActive || WiFi.status()==WL_CONNECTED)return;
+  if(!autoWifi||WiFi.status()==WL_CONNECTED)return;
   std::vector<WifiRecord> saved;
   if(!readWifiRecords(saved)||saved.empty())return;
   wifiTarget=saved[0].ssid;wifiPassword=saved[0].pass;
@@ -540,9 +575,12 @@ static void drawSettings(){
     "Brightness: "+String(brightness),
     "Sleep: "+(sleepMinutes?String(sleepMinutes)+" min":String("Never")),
     "Save settings",
-    "Sync time now"
+    "Sync time now",
+    "Import config from SD",
+    "Export config to SD"
   };
-  for(int i=0;i<7;i++)line(22+i*14,rows[i],i==settingsIndex);
+  const int first=std::max(0,settingsIndex-5);
+  for(int i=first;i<9;i++)line(22+(i-first)*14,rows[i],i==settingsIndex);
   footer("W/S select A/D change Enter");
 }
 static void settingsActivate(int delta){
@@ -551,15 +589,20 @@ static void settingsActivate(int delta){
   else if(settingsIndex==2){tzHours=constrain(tzHours+delta,-12,14);ntpStarted=false;}
   else if(settingsIndex==3)brightness=constrain(brightness+delta*16,20,255);
   else if(settingsIndex==4)sleepMinutes=constrain(sleepMinutes+delta,0,60);
-  else if(settingsIndex==5){showMessage(saveSettings()?"Settings saved":"SD unavailable",Screen::Settings);return;}
+  else if(settingsIndex==5){showMessage(saveSettings()?"Settings saved in NVS":"NVS save failed",Screen::Settings);return;}
   else if(settingsIndex==6){ntpStarted=false;startNtp();}
+  else if(settingsIndex==7){
+    if(configImportSd()){readSettings();applySettings();showMessage("Config imported to NVS",Screen::Settings);}
+    else showMessage("Import failed / no SD",Screen::Settings);
+    return;
+  }
+  else if(settingsIndex==8){showMessage(configExportSd()?"Exported M5KNIFE.CFG":"Export failed / no SD",Screen::Settings);return;}
   applySettings();drawSettings();
 }
 
 static bool irLoadProfile() {
-  if(usbActive || (!sdReady && !mountSd())) {irNotice="SD not available";return false;}
-  String data;
-  if(!configReadFile(CONFIG_FILE,data)) {irNotice="No config on SD";return false;}
+  String data=activeConfig;
+  if(data.isEmpty()){irNotice="No stored config";return false;}
   String block=configSection(data,"REMOTE");
   if(block.isEmpty()){irNotice="No [REMOTE] profile";return false;}
   int offset=0;
@@ -588,7 +631,7 @@ static bool irLoadProfile() {
   irProfileAddress=(uint16_t)address;
   irProfileSamsung=samsung;
   for(int i=0;i<6;i++){irButtonCommands[i]=commands[i];irButtonPresent[i]=found[i];}
-  irProfileLoaded=true; irNotice="Loaded /M5KNIFE.CFG";
+  irProfileLoaded=true; irNotice="Loaded NVS profile";
   return true;
 }
 
@@ -800,7 +843,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.4.9",
+    "Version 0.5.11",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
     "",
@@ -1215,8 +1258,7 @@ static void httpUploadDone(){
 static void startHttpFiles(){
   if(WiFi.status()!=WL_CONNECTED){showMessage("Connect to WiFi first",Screen::Network);return;}
   if(usbActive || (!sdReady && !mountSd())){showMessage("SD unavailable",Screen::Network);return;}
-  // Default HTTP Basic authentication password.
-  // Credentials loaded from [HTTPD], otherwise defaults are used.
+  // Credentials loaded from NVS [HTTPD], otherwise defaults are used.
   if(httpPassword.isEmpty())httpPassword="1234";
   httpRequests=0;httpUploadFailed=false;httpUploadPath="";
   if(!httpRoutesRegistered){
@@ -1674,7 +1716,7 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::Settings) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && settingsIndex>0)--settingsIndex;
-    if(down && settingsIndex<6)++settingsIndex;
+    if(down && settingsIndex<8)++settingsIndex;
     if(left)settingsActivate(-1);
     else if(right || k.enter)settingsActivate(1);
     else drawSettings();
@@ -1913,6 +1955,12 @@ void setup() {
   IrSender.begin(DISABLE_LED_FEEDBACK);
   IrSender.setSendPin(IR_TX_PIN);
   sdReady=mountSd();
+  Preferences nvsProbe;nvsReady=nvsProbe.begin("m5knife",false);if(nvsReady)nvsProbe.end();
+  if(!configLoadNvs(activeConfig)){
+    if(!sdReady||!configImportSd()){
+      configApply("[SETTINGS]\nAUTO_WIFI=1\nNTP=1\nBRIGHTNESS=128\nSLEEP_MIN=0\nTZ_HOURS=0\n[WIFI]\n[REMOTE]\n[HTTPD]\nUSERNAME=m5knife\nPASSWORD=1234\n");
+    }
+  }
   readSettings();applySettings();autoConnectWifi();
   lastInteraction=millis();
   sdCheckAt=millis()+SD_CHECK_INTERVAL;

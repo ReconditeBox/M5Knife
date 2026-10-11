@@ -226,3 +226,11 @@ PASSWORD=1234
 ```
 
 **SLEEP_MIN=0 means never sleep**, and is the default. Set `USERNAME` and `PASSWORD` in the `[HTTPD]` section to change HTTP Basic login; if omitted, defaults remain `m5knife` / `1234`. The password is stored in plaintext on the SD card and transmitted over unencrypted HTTP; use only on a trusted network. Stop HTTPD before editing its configuration, and restart the Cardputer to load changes. This revision needs compilation and on-device testing before merge.
+
+### M5Knife 0.5.11 development: NVS settings with SD import/export
+
+The ESP32-S3's internal non-volatile flash (NVS, via Preferences) is now the **primary** configuration store. Boot reads NVS without needing an SD card. If no saved NVS configuration exists yet, the firmware imports `/M5KNIFE.CFG` from the SD card once; otherwise it initializes built-in defaults (including `SLEEP_MIN=0`, meaning Never). Subsequent boots do not automatically overwrite NVS from SD. Routine Settings and Wi-Fi saves write to NVS and retain other configuration sections; infrared profiles and HTTPD credentials are also read from NVS.
+
+Two Settings menu actions manage the same human-editable INI-style file: **Import config from SD** (replaces NVS configuration from `/M5KNIFE.CFG`) and **Export config to SD** (writes current NVS configuration to that file). Import checks file size and required sections before writing; take a backup before experimenting. Export uses a temporary file and backup during updates. The firmware does not erase the NVS partition on normal firmware upload; a full-flash erase or repartitioning can remove settings. NVS contains plaintext Wi-Fi and HTTPD credentials and is not encrypted by this firmware.
+
+This is a development branch, version **0.5.11**, not yet compiled or hardware-tested. Stable `main` remains **0.4.9**.
