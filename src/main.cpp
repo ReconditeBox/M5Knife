@@ -970,7 +970,11 @@ td.actions input{width:112px}tbody tr:hover{background:#152a32}
       String path=httpChild(dir,name),url=httpUrlEncode(path);
       html+="<tr><td class='filename'>";
       if(item.isDirectory())html+="📁 <a class='file' href='/?dir="+url+"'>"+httpEscape(name)+"</a>";
-      else html+="▤ <a class='file' href='/download?path="+url+"'>"+httpEscape(name)+"</a>";
+      else {
+        const bool preview=httpInlineType(name)!=nullptr;
+        html+="▤ <a class='file' href='/download?path="+url+(preview?"&view=1":"")+
+          "'"+(preview?" target='_blank' rel='noopener'":"")+">"+httpEscape(name)+"</a>";
+      }
       html+="</td><td class='muted'>";
       if(item.isDirectory())html+="—";
       else html+=String((uint32_t)item.size())+" B";
@@ -1031,6 +1035,29 @@ async function expand(path,ul,button){
 </script></body></html>)HTML";
   httpFiles.send(200,"text/html; charset=utf-8",html);
 }
+static const char* httpInlineType(const String& filename){
+  String ext=filename.substring(filename.lastIndexOf('.')+1);
+  ext.toLowerCase();
+  if(ext=="txt"||ext=="log"||ext=="cfg"||ext=="ini"||ext=="md"||
+     ext=="c"||ext=="cpp"||ext=="h"||ext=="hpp"||ext=="py"||ext=="bas"||
+     ext=="asm"||ext=="mac"||ext=="lst")return "text/plain; charset=utf-8";
+  if(ext=="csv")return "text/csv; charset=utf-8";
+  if(ext=="json")return "application/json";
+  if(ext=="png")return "image/png";
+  if(ext=="jpg"||ext=="jpeg")return "image/jpeg";
+  if(ext=="gif")return "image/gif";
+  if(ext=="webp")return "image/webp";
+  if(ext=="bmp")return "image/bmp";
+  if(ext=="ico")return "image/x-icon";
+  if(ext=="pdf")return "application/pdf";
+  if(ext=="mp3")return "audio/mpeg";
+  if(ext=="wav")return "audio/wav";
+  if(ext=="ogg")return "audio/ogg";
+  if(ext=="mp4")return "video/mp4";
+  if(ext=="webm")return "video/webm";
+  // HTML, SVG, JavaScript, and unknown files stay downloads rather than executing.
+  return nullptr;
+}
 static void httpDownload(){
   if(!httpAuth())return;
   String path=httpFiles.arg("path");
@@ -1039,8 +1066,12 @@ static void httpDownload(){
   if(!f||f.isDirectory()){if(f)f.close();httpFiles.send(404,"text/plain","File not found");return;}
   String name=path.substring(path.lastIndexOf('/')+1);
   name.replace("\"","_");
-  httpFiles.sendHeader("Content-Disposition","attachment; filename=\""+name+"\"");
-  httpFiles.streamFile(f,"application/octet-stream");
+  const char* mime=httpInlineType(name);
+  const bool inlineView=httpFiles.arg("view")=="1" && mime;
+  httpFiles.sendHeader("X-Content-Type-Options","nosniff");
+  httpFiles.sendHeader("Content-Disposition",
+    String(inlineView?"inline":"attachment")+"; filename=\\\""+name+"\\\"");
+  httpFiles.streamFile(f,inlineView?mime:"application/octet-stream");
   f.close();
 }
 static void httpMkdir(){
