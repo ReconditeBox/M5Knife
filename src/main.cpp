@@ -226,7 +226,7 @@ static bool probeSd() {
   }
   return true;
 }
-// /wifi.conf uses SSID1/PASS1, SSID2/PASS2, etc.
+// /WIFI.CFG uses SSID1/PASS1, SSID2/PASS2, etc.
 // Preserve spaces and punctuation in values; no trimming or comment parsing.
 struct WifiRecord { String ssid, pass; };
 static constexpr size_t MAX_WIFI_RECORDS=16;
@@ -236,7 +236,7 @@ static bool wifiConfigSdReady() {
 }
 static bool readWifiRecords(std::vector<WifiRecord>& records) {
   records.clear();
-  File f=SD.open("/wifi.conf",FILE_READ);
+  File f=SD.open("/WIFI.CFG",FILE_READ);
   if(!f) return false;
   String names[MAX_WIFI_RECORDS], passwords[MAX_WIFI_RECORDS];
   bool hasName[MAX_WIFI_RECORDS]={}, hasPassword[MAX_WIFI_RECORDS]={};
@@ -279,8 +279,8 @@ static bool writeWifiRecords(const std::vector<WifiRecord>& records) {
   f.flush();f.close();
   if(!ok) {SD.remove("/wifi.tmp");return false;}
   // FAT rename will not overwrite an existing destination.
-  if(SD.exists("/wifi.conf") && !SD.remove("/wifi.conf")) return false;
-  return SD.rename("/wifi.tmp","/wifi.conf");
+  if(SD.exists("/WIFI.CFG") && !SD.remove("/WIFI.CFG")) return false;
+  return SD.rename("/wifi.tmp","/WIFI.CFG");
 }
 static void saveWifiConfig() {
   if(WiFi.status()!=WL_CONNECTED || WiFi.SSID()!=wifiTarget) {
@@ -293,8 +293,8 @@ static void saveWifiConfig() {
     scanStatus="Invalid credentials";draw();return;
   }
   std::vector<WifiRecord> records;
-  if(SD.exists("/wifi.conf") && !readWifiRecords(records)) {
-    scanStatus="Cannot read wifi.conf";draw();return;
+  if(SD.exists("/WIFI.CFG") && !readWifiRecords(records)) {
+    scanStatus="Cannot read WIFI.CFG";draw();return;
   }
   bool found=false;
   for(auto& item:records)
@@ -303,13 +303,13 @@ static void saveWifiConfig() {
     if(records.size()>=MAX_WIFI_RECORDS) {scanStatus="WiFi config full";draw();return;}
     records.push_back({wifiTarget,wifiPassword});
   }
-  scanStatus=writeWifiRecords(records) ? "Saved /wifi.conf" : "Failed saving wifi.conf";
+  scanStatus=writeWifiRecords(records) ? "Saved /WIFI.CFG" : "Failed saving WIFI.CFG";
   draw();
 }
 static void loadWifiConfig() {
   if(!wifiConfigSdReady()) {scanStatus="SD card unavailable";draw();return;}
   std::vector<WifiRecord> records;
-  if(!readWifiRecords(records)) {scanStatus="No /wifi.conf on SD";draw();return;}
+  if(!readWifiRecords(records)) {scanStatus="No /WIFI.CFG on SD";draw();return;}
   if(records.empty()) {scanStatus="No valid saved networks";draw();return;}
   // L connects to the highlighted network if saved; otherwise report it.
   if(scanSelection>=scanEntries.size()) {scanStatus="Select a network first";draw();return;}
@@ -322,7 +322,7 @@ static void loadWifiConfig() {
       return;
     }
   }
-  scanStatus="Selected WiFi not in wifi.conf";draw();
+  scanStatus="Selected WiFi not in WIFI.CFG";draw();
 }
 
 static void scanDir() {
