@@ -20,6 +20,7 @@
 #include <cstring>
 #include <vector>
 #include <algorithm>
+#include <time.h>
 
 // M5Stack Cardputer Adv microSD slot, shared with the original Cardputer.
 static constexpr int SD_CS = 12, SD_MOSI = 14, SD_MISO = 39, SD_SCK = 40;
@@ -27,7 +28,7 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting, About };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting, About, Settings, Editor, EditorSearch };
 enum class Action { None, Mkdir, Rename, Delete };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -40,6 +41,13 @@ static size_t selected = 0, scrollPos = 0;
 static int homeIndex = 0, diskIndex = 0;
 static int statusScroll=0;
 static int aboutScroll=0;
+static int settingsIndex=0, viewerTop=0, editorLine=0, editorColumn=0;
+static bool autoWifi=true, ntpEnabled=true;
+static int brightness=128, sleepMinutes=0, tzHours=0;
+static uint32_t lastInteraction=0;
+static String editorText, searchText, editorNotice;
+static bool editorDirty=false, editorSearchMode=false;
+static bool ntpStarted=false;
 static bool waitingKeyRelease = false;
 struct ScanEntry { String label; int rssi; bool secured; };
 static std::vector<ScanEntry> scanEntries;
@@ -100,6 +108,7 @@ static uint32_t wifiConnectStarted = 0;
 static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 18000;
 static void draw();
 static void beginWifiConnection(); // Used by SD WiFi config loader.
+static void showMessage(const String&, Screen);
 
 static void scanWifi() {
   scanEntries.clear(); scanSelection=scanScroll=0;
@@ -402,6 +411,75 @@ static void loadWifiConfig() {
   scanStatus="Selected WiFi not in WIFI.CFG";draw();
 }
 
+static void readSettings(){
+  if(!sdReady || usbActive)return;
+  File f=SD.open("/M5KNIFE.CFG",FILE_READ);if(!f)return;
+  while(f.available()){
+    String row=f.readStringUntil('\n');row.trim();
+    int equal=row.indexOf('=');if(equal<0)continue;
+    String key=row.substring(0,equal),value=row.substring(equal+1);
+    if(key=="AUTO_WIFI")autoWifi=value!="0";
+    else if(key=="NTP")ntpEnabled=value!="0";
+    else if(key=="BRIGHTNESS")brightness=constrain(value.toInt(),20,255);
+    else if(key=="SLEEP_MIN")sleepMinutes=constrain(value.toInt(),0,60);
+    else if(key=="TZ_HOURS")tzHours=constrain(value.toInt(),-12,14);
+  }
+  f.close();
+}
+static bool saveSettings(){
+  if(!sdReady || usbActive)return false;
+  File f=SD.open("/M5KNIFE.CFG",FILE_WRITE);if(!f)return false;
+  f.println(String("AUTO_WIFI=")+(autoWifi?"1":"0"));
+  f.println(String("NTP=")+(ntpEnabled?"1":"0"));
+  f.println(String("BRIGHTNESS=")+brightness);
+  f.println(String("SLEEP_MIN=")+sleepMinutes);
+  f.println(String("TZ_HOURS=")+tzHours);
+  f.flush();f.close();return true;
+}
+static void applySettings(){
+  M5Cardputer.Display.setBrightness(brightness);
+}
+static void startNtp(){
+  if(ntpEnabled && !ntpStarted && WiFi.status()==WL_CONNECTED){
+    configTime(tzHours*3600,0,"pool.ntp.org","time.google.com");
+    ntpStarted=true;
+  }
+}
+static void autoConnectWifi(){
+  if(!autoWifi||!sdReady || usbActive || WiFi.status()==WL_CONNECTED)return;
+  std::vector<WifiRecord> saved;
+  if(!readWifiRecords(saved)||saved.empty())return;
+  wifiTarget=saved[0].ssid;wifiPassword=saved[0].pass;
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifiTarget.c_str(),wifiPassword.c_str());
+  wifiConnectStarted=millis();
+  // Startup connection is asynchronous; the user can keep using the menu.
+}
+static void drawSettings(){
+  header("SETTINGS");
+  String rows[]={
+    String("Auto WiFi: ")+(autoWifi?"ON":"OFF"),
+    String("NTP sync: ")+(ntpEnabled?"ON":"OFF"),
+    "Timezone: UTC"+String(tzHours>=0?"+":"")+String(tzHours),
+    "Brightness: "+String(brightness),
+    "Sleep: "+String(sleepMinutes)+" min",
+    "Save settings",
+    "Sync time now"
+  };
+  for(int i=0;i<7;i++)line(22+i*14,rows[i],i==settingsIndex);
+  footer("W/S select A/D change Enter");
+}
+static void settingsActivate(int delta){
+  if(settingsIndex==0)autoWifi=!autoWifi;
+  else if(settingsIndex==1){ntpEnabled=!ntpEnabled;ntpStarted=false;}
+  else if(settingsIndex==2)tzHours=constrain(tzHours+delta,-12,14);
+  else if(settingsIndex==3)brightness=constrain(brightness+delta*16,20,255);
+  else if(settingsIndex==4)sleepMinutes=constrain(sleepMinutes+delta,0,60);
+  else if(settingsIndex==5){showMessage(saveSettings()?"Settings saved":"SD unavailable",Screen::Settings);return;}
+  else if(settingsIndex==6){ntpStarted=false;startNtp();}
+  applySettings();drawSettings();
+}
+
 static bool irLoadProfile() {
   if(usbActive || (!sdReady && !mountSd())) {irNotice="SD not available";return false;}
   File f=SD.open("/IR.CFG",FILE_READ);
@@ -455,9 +533,9 @@ static void scanDir() {
 static void drawHome() {
   header("HOME");
   auto& d = M5Cardputer.Display;
-  const char* labels[8] = {"FILES", "USB", "WIFI", "NETWORK", "BLUETOOTH", "INFRARED", "STATUS", "ABOUT"};
+  const char* labels[9] = {"FILES", "USB", "WIFI", "NETWORK", "BLUETOOTH", "INFRARED", "STATUS", "ABOUT", "SETTINGS"};
   // Three visible tiles. Keep the selection centred where possible.
-  const int first = std::min(5, std::max(0, homeIndex - 1));
+  const int first = std::min(6, std::max(0, homeIndex - 1));
   for (int slot = 0; slot < 3; ++slot) {
     const int i = first + slot;
     const int x = 8 + slot * 78;
@@ -505,16 +583,24 @@ static void drawHome() {
       d.drawCircle(cx,cy,13,ink);
       d.drawLine(cx,cy,cx+7,cy-7,ink);
       d.fillCircle(cx,cy,2,ink);
-    } else { // About: information symbol
+    } else if (i==7) { // About: information symbol
       d.drawCircle(cx,cy,13,ink);
       d.fillCircle(cx,cy-7,2,ink);
       d.drawLine(cx,cy-2,cx,cy+9,ink);
+    } else { // Settings
+      d.drawCircle(cx,cy,11,ink);
+      d.drawCircle(cx,cy,4,ink);
+      for(int a=0;a<8;a++){
+        float angle=a*3.1415926f/4;
+        d.drawLine(cx+(int)(12*cos(angle)),cy+(int)(12*sin(angle)),
+                   cx+(int)(16*cos(angle)),cy+(int)(16*sin(angle)),ink);
+      }
     }
     d.setTextColor(ink, fill);
     d.drawCenterString(labels[i], cx, y+53);
   }
   d.setTextColor(MUTED, BG);
-  d.drawCenterString(String(homeIndex+1) + " / 8", 120, 104);
+  d.drawCenterString(String(homeIndex+1) + " / 9", 120, 104);
   footer("A/D or arrows: scroll  Enter  G0");
 }
 static void drawFiles() {
@@ -990,6 +1076,7 @@ static void draw() {
     case Screen::IrRemote: drawIrRemote(); break;
     case Screen::Status: drawStatus(); break;
     case Screen::About: drawAbout(); break;
+    case Screen::Settings: drawSettings(); break;
     case Screen::WifiPassword: drawWifiPassword(); break;
     case Screen::WifiConnecting: drawWifiConnecting(); break;
   }
@@ -1041,7 +1128,7 @@ static void handleKeys(const Keys& k) {
   const bool backspace=k.del && !k.fn;
   if(screen==Screen::Home) {
     if(left && homeIndex > 0) --homeIndex;
-    if(right && homeIndex < 7) ++homeIndex;
+    if(right && homeIndex < 8) ++homeIndex;
     if(k.enter) {
       // Explicit dispatch for all eight launcher tiles.
       switch (homeIndex) {
@@ -1064,9 +1151,18 @@ static void handleKeys(const Keys& k) {
           drawStatus();
           break;
         case 7: screen=Screen::About;aboutScroll=0;drawAbout();break;
+        case 8: screen=Screen::Settings;settingsIndex=0;drawSettings();break;
       }
       return;
     }
+  } else if(screen==Screen::Settings) {
+    if(escape||backspace||typed(k,'b')){goHome();return;}
+    if(up && settingsIndex>0)--settingsIndex;
+    if(down && settingsIndex<6)++settingsIndex;
+    if(left)settingsActivate(-1);
+    else if(right || k.enter)settingsActivate(1);
+    else drawSettings();
+    return;
   } else if(screen==Screen::About) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && aboutScroll>0)--aboutScroll;
@@ -1240,6 +1336,8 @@ void setup() {
   IrSender.begin(DISABLE_LED_FEEDBACK);
   IrSender.setSendPin(IR_TX_PIN);
   sdReady=mountSd();
+  readSettings();applySettings();autoConnectWifi();
+  lastInteraction=millis();
   sdCheckAt=millis()+SD_CHECK_INTERVAL;
   USB.onEvent(usbEvent);
   // Register MSC and begin native USB at boot so an already-connected
@@ -1268,18 +1366,23 @@ void setup() {
 }
 void loop() {
   M5Cardputer.update();
+  startNtp();
+  if(sleepMinutes>0 && (uint32_t)(millis()-lastInteraction)>(uint32_t)sleepMinutes*60000UL)
+    M5Cardputer.Display.setBrightness(0);
   // G0 is globally handled BEFORE all tool-specific keyboard processing.
   if(M5Cardputer.BtnA.wasPressed()) {
     if (usbActive) {
       if ((!usbConnected || usbEjected) && !usbWriting) {stopUsb();goHome();}
       else drawUsb();
     } else goHome();
-    waitingKeyRelease=true;
+    lastInteraction=millis();applySettings();waitingKeyRelease=true;
   }
   if(M5Cardputer.BtnA.wasReleased()) waitingKeyRelease=false;
   if(waitingKeyRelease) {delay(5);return;}
-  if(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed())
+  if(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+    lastInteraction=millis();applySettings();
     handleKeys(M5Cardputer.Keyboard.keysState());
+  }
   if(screen==Screen::WifiConnecting) {
     wl_status_t state=WiFi.status();
     if(state==WL_CONNECTED) showWifiConnectionResult(true);
