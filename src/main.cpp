@@ -29,7 +29,7 @@ static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
 enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting, About, Settings, Editor, EditorSearch };
-enum class Action { None, Mkdir, Rename, Delete };
+enum class Action { None, Mkdir, Rename, Delete, NewText };
 struct Entry { String name; bool dir; uint64_t size; };
 
 static Screen screen = Screen::Home, returnScreen = Screen::Files;
@@ -1057,16 +1057,21 @@ static bool loadText(){
 static void drawViewer(){
   header(textEdit?"TEXT EDITOR":"TEXT VIEWER");
   int offset=0,number=0,y=24;
+  int cursorLine=0,cursorCol=0;
+  if(textEdit){for(int i=0;i<textCursor;++i){if(textBuffer[i]=='\n'){++cursorLine;cursorCol=0;}else ++cursorCol;}}
   while(offset<(int)textBuffer.length() && y<=108){
     int next=textBuffer.indexOf('\n',offset);
     if(next<0)next=textBuffer.length();
     String row=textBuffer.substring(offset,next);
-    if(number>=textTop){line(y,String(number+1)+": "+row.substring(0,31),textEdit && textCursor==number);y+=14;}
+    if(number>=textTop){
+      int start= (textEdit && cursorLine==number && cursorCol>28)?cursorCol-28:0;
+      line(y,String(number+1)+": "+row.substring(start,start+30),textEdit && cursorLine==number);y+=14;
+    }
     offset=next+1;++number;
   }
   if(textBuffer.isEmpty())line(24,"(empty file)");
-  if(textEdit)line(108,"Append mode (8 KiB maximum)",false,MUTED);
-  footer(textEdit?"Type  Enter NL  Fn+S save  B exit":"W/S scroll F find E edit B back");
+
+  footer(textEdit?"Fn+arrows move Fn+S save Esc exit":"W/S scroll F find E edit B back");
 }
 static bool saveText(){
   if(!sdReady||usbActive)return false;
@@ -1131,6 +1136,10 @@ static void completeInput() {
   String to=childPath(inputText);
   if (SD.exists(to)) { showMessage("Name already exists."); return; }
   if (action==Action::Mkdir) ok=SD.mkdir(to.c_str());
+  if (action==Action::NewText) {
+    File file=SD.open(to.c_str(),FILE_WRITE);
+    if(file){file.close();ok=true;}
+  }
   if (action==Action::Rename) ok=SD.rename(selectedPath.c_str(),to.c_str());
   action=Action::None; scanDir(); screen=Screen::Files; draw();
   if (!ok) showMessage("SD operation failed.");
@@ -1326,20 +1335,51 @@ static void handleKeys(const Keys& k) {
     if(typed(k,'r')) { if (!sdReady) mountSd(); else probeSd(); scanDir(); }
     if(typed(k,'m')) {diskIndex=0;screen=Screen::Disk;draw();return;}
     if(typed(k,'n') && sdReady) {action=Action::Mkdir;inputText="";screen=Screen::Input;draw();return;}
+    if(typed(k,'t') && sdReady) {action=Action::NewText;inputText="";screen=Screen::Input;draw();return;}
     if(typed(k,'e') && selected<entries.size()) {action=Action::Rename;selectedPath=childPath(entries[selected].name);inputText=entries[selected].name;screen=Screen::Input;draw();return;}
     if(typed(k,'x') && selected<entries.size()) {action=Action::Delete;selectedPath=childPath(entries[selected].name);screen=Screen::Confirm;draw();return;}
   } else if(screen==Screen::Viewer) {
-    if(escape || (k.fn && typed(k,'b'))){textEdit=false;screen=Screen::Files;draw();return;}
+    if(escape || (k.fn && typed(k,'b'))){
+      if(textEdit && textDirty){showMessage("Unsaved changes: Fn+S save",Screen::Viewer);return;}
+      textEdit=false;screen=Screen::Files;draw();return;
+    }
     if(k.fn && typed(k,'s') && textEdit){showMessage(saveText()?"Saved":"Save failed",Screen::Viewer);return;}
-    if(!textEdit && typed(k,'e')){textEdit=true;draw();return;}
+    if(!textEdit && typed(k,'e')){textEdit=true;textCursor=0;draw();return;}
     if(!textEdit && typed(k,'f')){textFind="";screen=Screen::EditorSearch;draw();return;}
-    if(up && textTop>0)--textTop;
-    if(down && textTop<1000)++textTop;
-    if(textEdit) {
-      if(k.del && textBuffer.length()){textBuffer.remove(textBuffer.length()-1);textDirty=true;}
-      else if(k.enter && textBuffer.length()<8192){textBuffer+='\n';textDirty=true;}
-      else if(!k.fn)for(char c:k.word)if(c>=32&&c<=126&&textBuffer.length()<8192){textBuffer+=c;textDirty=true;}
-      // First version appends text; scrolling remains available.
+    if(textEdit){
+      if(left && textCursor>0)--textCursor;
+      else if(right && textCursor<(int)textBuffer.length())++textCursor;
+      else if(up || down){
+        int lineStart=textBuffer.lastIndexOf('\n',textCursor-1)+1;
+        int column=textCursor-lineStart;
+        if(up && lineStart>0){
+          int previousEnd=lineStart-1;
+          int previousStart=textBuffer.lastIndexOf('\n',previousEnd-1)+1;
+          textCursor=previousStart+std::min(column,previousEnd-previousStart);
+        }else if(down){
+          int next=textBuffer.indexOf('\n',textCursor);
+          if(next>=0){
+            int nextStart=next+1;
+            int nextEnd=textBuffer.indexOf('\n',nextStart);
+            if(nextEnd<0)nextEnd=textBuffer.length();
+            textCursor=nextStart+std::min(column,nextEnd-nextStart);
+          }
+        }
+      }else if(k.del && textCursor>0){textBuffer.remove(--textCursor,1);textDirty=true;}
+      else if(k.enter && textBuffer.length()<8192){
+        textBuffer=textBuffer.substring(0,textCursor)+"\n"+textBuffer.substring(textCursor);
+        ++textCursor;textDirty=true;
+      }else if(!k.fn)for(char c:k.word)if(c>=32&&c<=126&&textBuffer.length()<8192){
+        textBuffer=textBuffer.substring(0,textCursor)+String(c)+textBuffer.substring(textCursor);
+        ++textCursor;textDirty=true;
+      }
+      int cursorLine=0;
+      for(int i=0;i<textCursor;++i)if(textBuffer[i]=='\n')++cursorLine;
+      if(cursorLine<textTop)textTop=cursorLine;
+      if(cursorLine>=textTop+6)textTop=cursorLine-5;
+    } else {
+      if(up && textTop>0)--textTop;
+      if(down && textTop<1000)++textTop;
     }
     draw();return;
   } else if(screen==Screen::EditorSearch) {
