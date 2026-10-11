@@ -4,7 +4,7 @@ First **development build**, independent of the Cardputer CP/M project.
 
 ## What is implemented
 
-- Four-icon launcher: **Files**, **USB**, **WiFi**, and **Bluetooth**. The WiFi and Bluetooth icons are placeholders and Enter does nothing when selected.
+- Six-icon horizontal scrolling launcher: **Files**, **USB**, **WiFi**, **Bluetooth**, **Status**, and **About**. Three icons are visible at a time; WiFi, Bluetooth, Status, and About are inactive placeholders.
 - Universal **G0** button returns to the launcher.
 - Automatic SD card mount at boot using the Cardputer Adv's SPI SD connection.
 - Browse SD directories, open a basic text preview, create folders, rename entries, delete files or **empty** directories with confirmation.
@@ -15,7 +15,7 @@ First **development build**, independent of the Cardputer CP/M project.
 
 ## Keyboard
 
-- Main launcher: `W` / `A` / `S` / `D` (or Fn + arrow keys) navigates the 2×2 grid; Enter opens Files or USB. WiFi and Bluetooth do nothing yet.
+- Main launcher: `A` / `D` (or Fn + left/right arrows) moves horizontally across all six icons; Enter opens Files or USB. WiFi, Bluetooth, Status, and About do nothing yet.
 - Files: `W` / `S` (or Fn + up/down) scrolls; Enter opens; `B` goes up; `N` creates folder; `E` renames; `X` deletes (confirmation); `M` opens disk operations; `R` retries SD mount / refreshes.
 - File preview: `B` backs out (preview currently shows beginning of file only).
 - G0: returns to the main launcher from **any** screen.
