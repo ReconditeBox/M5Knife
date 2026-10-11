@@ -89,3 +89,14 @@ The `fix/usb-msc-performance` branch now **electrically detaches the USB device 
 ## WiFi connection (feature branch)
 
 In WiFi, scan networks and highlight an SSID using W/S. Enter selects it; an encrypted network prompts for a password (input displayed as entered, without masking), while an open network connects immediately. Enter submits the password, Fn+backtick cancels, R rescans, and D disconnects. The connection attempt is asynchronous with an 18-second timeout and can be cancelled with G0. Status reports the SSID and IPv4 address once connected. WiFi passwords are not saved by the toolkit; the ESP32 WiFi system may persist configuration according to its framework settings. Hidden SSIDs and enterprise WiFi are not supported in this version. This feature has not yet been compile-tested or hardware-tested. USB MSC and SD code are unchanged.
+
+## WiFi credentials on SD (experimental)
+
+From the WiFi scan screen: **P** saves the currently connected SSID and its most recently entered password to `/wifi.conf` in the SD card root; **L** loads that file and connects to the stored network. Format:
+
+```ini
+SSID=MyNetwork
+PASSWORD=MyPassword
+```
+
+The file is **unencrypted plaintext** and can be read by anyone with the SD card or USB mass-storage access. P overwrites any existing file. Save only after the connection succeeds; loaded credentials can be saved again. SD access is blocked while USB MSC owns the card. This branch has not yet been compiled or tested on hardware.
