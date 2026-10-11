@@ -27,7 +27,7 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting, About };
 enum class Action { None, Mkdir, Rename, Delete };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -39,6 +39,7 @@ static bool sdReady = false;
 static size_t selected = 0, scrollPos = 0;
 static int homeIndex = 0, diskIndex = 0;
 static int statusScroll=0;
+static int aboutScroll=0;
 static bool waitingKeyRelease = false;
 struct ScanEntry { String label; int rssi; bool secured; };
 static std::vector<ScanEntry> scanEntries;
@@ -617,6 +618,40 @@ static void drawStatus() {
   }
   footer("W/S scroll  R refresh  B back");
 }
+static void drawAbout() {
+  header("ABOUT");
+  const char* rows[]={
+    "M5Knife",
+    "Version 0.4.5",
+    "M5Stack Cardputer Adv",
+    "Multi-function toolkit",
+    "",
+    "Developed by:",
+    "Tony Blews",
+    "",
+    "License: MIT",
+    "",
+    "GitHub repository:",
+    "ReconditeBox/M5Knife",
+    "",
+    "Built with:",
+    "Arduino / PlatformIO",
+    "M5Cardputer / M5Unified",
+    "M5GFX / IRremote",
+    "",
+    "github.com/ReconditeBox/",
+    "M5Knife"
+  };
+  constexpr int count=sizeof(rows)/sizeof(rows[0]);
+  if(aboutScroll>count-7)aboutScroll=count-7;
+  if(aboutScroll<0)aboutScroll=0;
+  for(int i=0;i<7 && aboutScroll+i<count;++i){
+    int n=aboutScroll+i;
+    line(22+i*14,rows[n],false,
+      (n==0 || n==5 || n==8 || n==10 || n==13)?ACCENT:FG);
+  }
+  footer("W/S scroll  B/G0 back");
+}
 static void drawIrMenu() {
   header("INFRARED");
   line(26,"NEC / Samsung TX - GPIO44",false,ACCENT);
@@ -954,6 +989,7 @@ static void draw() {
     case Screen::IrEdit: drawIrEdit(); break;
     case Screen::IrRemote: drawIrRemote(); break;
     case Screen::Status: drawStatus(); break;
+    case Screen::About: drawAbout(); break;
     case Screen::WifiPassword: drawWifiPassword(); break;
     case Screen::WifiConnecting: drawWifiConnecting(); break;
   }
@@ -1027,10 +1063,15 @@ static void handleKeys(const Keys& k) {
           statusScroll=0;
           drawStatus();
           break;
-        case 7: break; // About: placeholder
+        case 7: screen=Screen::About;aboutScroll=0;drawAbout();break;
       }
       return;
     }
+  } else if(screen==Screen::About) {
+    if(escape||backspace||typed(k,'b')){goHome();return;}
+    if(up && aboutScroll>0)--aboutScroll;
+    if(down && aboutScroll<13)++aboutScroll;
+    drawAbout();return;
   } else if(screen==Screen::Network) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && netMenuIndex>0)--netMenuIndex;
