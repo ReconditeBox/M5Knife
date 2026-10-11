@@ -92,7 +92,7 @@ In WiFi, scan networks and highlight an SSID using W/S. Enter selects it; an enc
 
 ## WiFi credentials on SD (experimental)
 
-The SD card root `/wifi.conf` holds up to 16 network credentials as unencrypted plaintext, using numbered pairs and blank lines between networks:
+The SD card root `/WIFI.CFG` holds up to 16 network credentials as unencrypted plaintext, using numbered pairs and blank lines between networks:
 
 ```ini
 SSID1=MyNetwork
