@@ -181,3 +181,9 @@ The server is started **only** in HTTP File Server mode, stopped with B or G0, a
 **Security:** This is HTTP, **not HTTPS**. The password is transmitted using HTTP Basic authentication and is not encrypted on the network. Only use this mode on trusted local networks, never expose port 80 to the internet or forward it through your router. Anyone with the login information and network access can read, change and delete SD files; keep backups. There is no guest/read-only role.
 
 This branch is not yet compiled or hardware-tested. Stable `main` is unchanged at M5Knife 0.4.6.
+
+### Two-pane web file manager (Stage 1)
+
+The browser interface now has a dark M5Knife-style header, an SD usage bar, a **collapsible folder tree** at left and a **file list** for the current directory at right. Click a triangle to expand/collapse a branch, or click its name to open it. Branch contents load on demand using `GET /tree?dir=...`; the server returns only directories in JSON. The current folder is highlighted in the tree, with its path displayed above the list. The Refresh button reloads the page.
+
+Existing upload, download, rename, delete and new-folder actions remain on the page. The file table shows name and size; modified timestamps are deliberately omitted pending reliable SD timestamp support. The browser page and file listing currently have a per-directory display cap (256 entries; folder branches 128), and large directories may use significant ESP32 memory when building the HTML page. Password credentials are unchanged (username `m5knife`, password `1234`). This experimental UI has not been compiled or hardware-tested yet.
