@@ -175,7 +175,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.2.1", 5, 5);
+  d.drawString("M5KNIFE 0.3.0", 5, 5);
   d.setTextColor(FG, 0x0205);
   d.drawRightString(text, 235, 5);
 }
