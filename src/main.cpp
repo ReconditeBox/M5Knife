@@ -999,7 +999,11 @@ static void handleKeys(const Keys& k) {
         case 0: openFiles(); break;
         case 1: startUsb(); break;
         case 2: scanWifi(); break;
-        case 3: screen=Screen::Network;netMenuIndex=0;draw();break;
+        case 3:
+          if(WiFi.status()==WL_CONNECTED) {
+            screen=Screen::Network;netMenuIndex=0;draw();
+          } else showMessage("Connect to WiFi first",Screen::Home);
+          break;
         case 4: scanBluetooth(); break;
         case 5:
           screen = Screen::Infrared;
