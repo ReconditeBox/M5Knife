@@ -9,7 +9,7 @@ First **development build**, independent of the Cardputer CP/M project.
 - Automatic SD card mount at boot using the Cardputer Adv's SPI SD connection.
 - Browse SD directories, open a basic text preview, create folders, rename entries, delete files or **empty** directories with confirmation.
 - SD capacity/used-space information under Files > Disk.
-- Missing-SD handling and a retry key.
+- Missing-SD handling and a retry key. A card is only reported READY after card type, capacity and root-directory checks; opening Files or pressing R in Files repeats detection.
 
 **Not implemented yet:** FAT32 formatting; USB Mass Storage; scrolling text viewer; recursive copy/move. The Format and USB screens deliberately make no changes: raw filesystem/USB handover requires safety work and device verification. This is NOT a finished USB reader or formatter.
 
