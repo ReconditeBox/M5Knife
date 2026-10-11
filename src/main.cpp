@@ -46,6 +46,8 @@ static String scanStatus;
 static bool bleInitialized = false;
 static int netMenuIndex=0;
 static bool netPingMode=false;
+static int netTool=0;
+static String netClientEndpoint, netClientPayload;
 static String netTarget, netOutput;
 static String netDefaultTarget="8.8.8.8";
 static void drawNetworkMenu();
@@ -629,8 +631,8 @@ static void drawIrRemote() {
 }
 static void drawNetworkMenu() {
   header("NETWORK");
-  const char* options[]={"Network information","DNS lookup","Ping host"};
-  for(int i=0;i<3;++i)line(32+i*22,options[i],i==netMenuIndex);
+  const char* options[]={"Network info","DNS lookup","Ping","TCP port scan","LAN scanner","TCP client"};
+  for(int i=0;i<6;++i)line(23+i*16,options[i],i==netMenuIndex);
   if(WiFi.status()!=WL_CONNECTED)line(101,"WiFi not connected",false,WARN);
   footer("W/S select Enter  B/G0 back");
 }
@@ -650,13 +652,13 @@ static void drawNetworkInfo() {
   footer("Enter/B back G0 home");
 }
 static void drawNetworkInput() {
-  header(netPingMode?"PING HOST":"DNS LOOKUP");
-  line(27,netPingMode?"Address or hostname:":"Hostname:",false,ACCENT);
+  header(netTool==2?"PING HOST":netTool==1?"DNS LOOKUP":netTool==3?"TCP PORT SCAN":netTool==5?"TCP CLIENT":"TCP SEND");
+  line(27,netTool==3?"Host (common ports):":netTool==5?"Host:port":netTool==6?"Text to send:":"Address or hostname:",false,ACCENT);
   line(51,netTarget.length()>35?netTarget.substring(netTarget.length()-35):netTarget);
   footer("Enter run  Del delete Fn+\x60 cancel");
 }
 static void drawNetworkResult() {
-  header(netPingMode?"PING RESULT":"DNS RESULT");
+  header(netTool==2?"PING RESULT":netTool==1?"DNS RESULT":netTool==3?"PORT RESULTS":netTool==4?"LAN RESULTS":"TCP RESULT");
   int y=23,pos=0;
   while(pos<(int)netOutput.length() && y<115){
     int end=netOutput.indexOf('\n',pos);
@@ -673,9 +675,80 @@ static uint16_t netChecksum(const uint8_t *p,size_t len){
   while(sum>>16)sum=(sum&65535)+(sum>>16);
   return (uint16_t)~sum;
 }
+// Short TCP connect attempts; intended for troubleshooting networks you control.
+static bool netResolve(const String& host,IPAddress& address){
+  return address.fromString(host) || WiFi.hostByName(host.c_str(),address);
+}
+static void netPortScan(){
+  IPAddress ip;
+  if(!netResolve(netTarget,ip)){netOutput="Host resolution failed";return;}
+  const uint16_t ports[]={21,22,23,25,53,80,110,139,443,445,3389,8080};
+  netOutput=ip.toString()+"\n";
+  int opened=0;
+  for(uint16_t port:ports){
+    WiFiClient client;
+    bool ok=client.connect(ip,port,180);
+    client.stop();
+    if(ok){netOutput+=String(port)+" OPEN\n";++opened;}
+    delay(1);
+  }
+  if(!opened)netOutput+="No listed ports open";
+}
+static void netLanScan(){
+  IPAddress local=WiFi.localIP(),mask=WiFi.subnetMask();
+  // First 32 neighbours only, on /24 or smaller networks.
+  if(mask[0]!=255 || mask[1]!=255 || mask[2]!=255 || mask[3]!=0){
+    netOutput="LAN scan requires /24 mask";return;
+  }
+  netOutput="LAN: "+String(local[0])+"."+String(local[1])+"."+String(local[2])+".0/24\n";
+  int found=0;
+  // TCP discovery detects only hosts accepting one of these ports.
+  for(int last=1;last<=32;++last){
+    IPAddress ip(local[0],local[1],local[2],last);
+    if(ip==local)continue;
+    WiFiClient client;
+    bool responsive=client.connect(ip,80,75);
+    client.stop();
+    if(!responsive) responsive=client.connect(ip,443,75);
+    client.stop();
+    if(responsive){netOutput+=ip.toString()+"\n";++found;}
+    delay(1);
+  }
+  if(!found)netOutput+="No TCP hosts found (1-32)";
+}
+static void netTcpClient(){
+  int colon=netClientEndpoint.lastIndexOf(':');
+  if(colon<=0){netOutput="Use host:port";return;}
+  String host=netClientEndpoint.substring(0,colon);
+  String portText=netClientEndpoint.substring(colon+1);
+  if(portText.length()==0 || portText.length()>5){netOutput="Invalid port";return;}
+  for(char c:portText)if(c<'0'||c>'9'){netOutput="Invalid port";return;}
+  int port=portText.toInt();
+  if(port<1||port>65535){netOutput="Port out of range";return;}
+  IPAddress ip;
+  if(!netResolve(host,ip)){netOutput="DNS failed";return;}
+  WiFiClient client;
+  if(!client.connect(ip,(uint16_t)port,1500)){netOutput="Connection failed";return;}
+  netOutput="Connected: "+ip.toString()+":"+String(port)+"\n";
+  if(netTarget.length())client.print(netTarget+"\r\n");
+  uint32_t start=millis();size_t total=0;
+  while((uint32_t)(millis()-start)<1600 && total<350){
+    while(client.available() && total<350){
+      char c=(char)client.read();++total;
+      if(c=='\r')continue;
+      if(c=='\n'||(c>=32&&c<=126))netOutput+=c;
+    }
+    delay(10);
+  }
+  client.stop();
+  if(!total)netOutput+="(No reply)";
+}
 static void runNetworkQuery(){
   netOutput="";
   if(WiFi.status()!=WL_CONNECTED)netOutput="Connect to WiFi first.";
+  else if(netTool==4)netLanScan();
+  else if(netTool==3)netPortScan();
+  else if(netTool==6)netTcpClient();
   else if(netTarget.isEmpty())netOutput="Enter a host.";
   else{
     IPAddress address;
@@ -918,18 +991,23 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::Network) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && netMenuIndex>0)--netMenuIndex;
-    if(down && netMenuIndex<2)++netMenuIndex;
+    if(down && netMenuIndex<5)++netMenuIndex;
     if(k.enter){
       if(netMenuIndex==0){screen=Screen::NetInfo;draw();return;}
-      netPingMode=(netMenuIndex==2);
-      netTarget=netPingMode?netDefaultTarget:"";
+      netTool=netMenuIndex;
+      netPingMode=(netTool==2);
+      if(netTool==4){runNetworkQuery();return;}
+      netTarget=netTool==2?netDefaultTarget:netTool==3?WiFi.gatewayIP().toString():netTool==5?WiFi.gatewayIP().toString()+":80":"";
       screen=Screen::NetInput;draw();return;
     }
   } else if(screen==Screen::NetInfo) {
     if(escape||backspace||typed(k,'b')||k.enter){screen=Screen::Network;draw();return;}
   } else if(screen==Screen::NetInput) {
     if(escape){screen=Screen::Network;draw();return;}
-    if(k.enter){runNetworkQuery();return;}
+    if(k.enter){
+      if(netTool==5){netClientEndpoint=netTarget;netTarget="";netTool=6;draw();return;}
+      runNetworkQuery();return;
+    }
     if(k.del){if(netTarget.length())netTarget.remove(netTarget.length()-1);}
     else if(!k.fn) for(char c:k.word)
       if(c>=33 && c<=126 && netTarget.length()<63)netTarget+=c;
