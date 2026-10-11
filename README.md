@@ -9,7 +9,7 @@ First **development build**, independent of the Cardputer CP/M project.
 - Automatic SD card mount at boot using the Cardputer Adv's SPI SD connection.
 - Browse SD directories, open a basic text preview, create folders, rename entries, delete files or **empty** directories with confirmation.
 - SD capacity/used-space information under Files > Disk.
-- Missing-SD handling and a retry key. The home screen rechecks card presence about every 2.5 seconds; Files and R also retry mounting.
+- Missing-SD handling and a retry key. The home screen checks card presence about every 2.5 seconds using a raw sector read when mounted, rather than unmounting and remounting each time. When missing, it periodically retries mounting. Files and R also retry.
 
 **Not implemented yet:** FAT32 formatting; scrolling text viewer; recursive copy/move. USB Mass Storage has an initial experimental implementation using raw SD sectors and ESP32-S3 native USB OTG; it is NOT hardware validated. Back up the card before testing. Windows must safely eject it (or USB must disconnect) before using G0 to leave USB mode. Do not open Files while USB MSC is active.
 
@@ -52,3 +52,9 @@ Dependency versions are pinned to avoid unexpectedly pulling newer M5GFX release
 ## If changing from an older copy
 
 Delete the old `M5-Toolkit` folder or extract this as a new project. If you reuse the same folder, remove `.pio/libdeps` and `.pio/build` before compiling so PlatformIO does not keep the previously downloaded M5GFX library.
+
+## USB and hot-swap testing (experimental)
+
+This version registers USB MSC when the firmware boots so Windows can enumerate an already-connected Cardputer. The disk is presented only while the USB icon is active. Use a disposable SD card, ideally inserted before power-on. Enter USB mode, then in Windows check **Device Manager** and **Disk Management**: a drive letter will only appear for media Windows can read. Safely eject the disk before G0.
+
+**Known limitation:** the USB logical-unit capacity is established at firmware boot. A card inserted after boot may be detected by Files, but the USB logical unit cannot automatically resize for a different card. Reboot with the intended card inserted before testing USB. Windows may also cache device/media state; disconnecting/reconnecting USB after entering USB mode may be necessary. This implementation remains unverified on physical Cardputer Adv hardware. USB MSC must not be used with valuable data until its enumeration and write paths are validated.
