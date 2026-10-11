@@ -138,7 +138,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE", 5, 5);
+  d.drawString("M5KNIFE 0.2.1", 5, 5);
   d.setTextColor(FG, 0x0205);
   d.drawRightString(text, 235, 5);
 }
@@ -452,12 +452,18 @@ static void handleKeys(const Keys& k) {
     if(left && homeIndex > 0) --homeIndex;
     if(right && homeIndex < 5) ++homeIndex;
     if(k.enter) {
-      if(homeIndex==0) openFiles();
-      else if(homeIndex==1) startUsb();
-      else if(homeIndex==2) scanWifi();
-      else if(homeIndex==3) scanBluetooth();
-      else if(homeIndex==4) {screen=Screen::Status;draw();}
-      // About remains an inactive placeholder.
+      // Explicit dispatch for all six launcher tiles.
+      switch (homeIndex) {
+        case 0: openFiles(); break;
+        case 1: startUsb(); break;
+        case 2: scanWifi(); break;
+        case 3: scanBluetooth(); break;
+        case 4:
+          screen = Screen::Status;
+          drawStatus();
+          break;
+        case 5: break; // About: placeholder
+      }
       return;
     }
   } else if(screen==Screen::Wifi || screen==Screen::Bluetooth) {
