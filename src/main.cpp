@@ -38,6 +38,7 @@ static String cwd = "/", inputText, message, selectedPath;
 static bool sdReady = false;
 static size_t selected = 0, scrollPos = 0;
 static int homeIndex = 0, diskIndex = 0;
+static int statusScroll=0;
 static bool waitingKeyRelease = false;
 struct ScanEntry { String label; int rssi; bool secured; };
 static std::vector<ScanEntry> scanEntries;
@@ -232,7 +233,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.4.1", 5, 5);
+  d.drawString("M5KNIFE 0.4.5", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -586,17 +587,35 @@ static String hardwareAddress(esp_mac_type_t type) {
 }
 static void drawStatus() {
   header("STATUS");
-  const bool connected = WiFi.status() == WL_CONNECTED;
-  line(23, "WiFi network", false, ACCENT);
-  String ssid = connected ? WiFi.SSID() : "Not connected";
-  if (ssid.length()>34) ssid=ssid.substring(0,31)+"...";
-  line(36, ssid);
-  line(51, "IP address", false, ACCENT);
-  line(64, connected ? WiFi.localIP().toString() : "Not connected");
-  line(79, "WiFi MAC", false, ACCENT);
-  line(91, hardwareAddress(ESP_MAC_WIFI_STA));
-  line(104, String("BT MAC: ")+hardwareAddress(ESP_MAC_BT));
-  footer("R refresh  B back  G0 menu");
+  const bool connected=WiFi.status()==WL_CONNECTED;
+  String ssid=connected?WiFi.SSID():"Not connected";
+  if(ssid.length()>30)ssid=ssid.substring(0,27)+"...";
+  String rows[]={
+    "WiFi: "+ssid,
+    "IP: "+(connected?WiFi.localIP().toString():String("Not connected")),
+    "WiFi MAC:",
+    hardwareAddress(ESP_MAC_WIFI_STA),
+    "Bluetooth MAC:",
+    hardwareAddress(ESP_MAC_BT),
+    "SD card:",
+    sdReady?String((uint32_t)(SD.cardSize()/1048576ULL))+" MiB total":"Not mounted",
+    sdReady?String((uint32_t)(SD.usedBytes()/1048576ULL))+" MiB used":"--",
+    sdReady?String((uint32_t)((SD.cardSize()-SD.usedBytes())/1048576ULL))+" MiB free":"--",
+    "Free heap: "+String(ESP.getFreeHeap()/1024)+" KiB",
+    "Min heap: "+String(ESP.getMinFreeHeap()/1024)+" KiB",
+    "Heap size: "+String(ESP.getHeapSize()/1024)+" KiB",
+    "Battery: "+String(M5.Power.getBatteryLevel())+"%",
+    "Battery: "+String(M5.Power.getBatteryVoltage())+" mV"
+  };
+  const int total=sizeof(rows)/sizeof(rows[0]);
+  if(statusScroll>total-7)statusScroll=total-7;
+  if(statusScroll<0)statusScroll=0;
+  for(int i=0;i<7 && statusScroll+i<total;++i){
+    const int n=statusScroll+i;
+    line(22+i*14,rows[n].substring(0,37),false,
+      (n==0||n==6||n==10||n==13)?ACCENT:FG);
+  }
+  footer("W/S scroll  R refresh  B back");
 }
 static void drawIrMenu() {
   header("INFRARED");
@@ -703,6 +722,12 @@ static uint32_t netIpNumber(IPAddress ip){
 static IPAddress netIpAddress(uint32_t value){
   return IPAddress((uint8_t)(value>>24),(uint8_t)(value>>16),(uint8_t)(value>>8),(uint8_t)value);
 }
+static String netPaddedIp(IPAddress ip){
+  char buffer[16];
+  snprintf(buffer,sizeof(buffer),"%03u.%03u.%03u.%03u",
+    (unsigned)ip[0],(unsigned)ip[1],(unsigned)ip[2],(unsigned)ip[3]);
+  return String(buffer);
+}
 static void netLanScan(){
   int separator=netTarget.indexOf('-');
   if(separator<0){netOutput="Use startIP-endIP";return;}
@@ -717,16 +742,17 @@ static void netLanScan(){
   }
   netOutput="Active hosts:\n";
   header("LAN SCANNING");
-  line(23,"Scanning selected range",false,ACCENT);
-  line(52,"Checking:",false,MUTED);
+  line(22,"Checking:",false,ACCENT);
+  line(52,"Active hosts / open ports:",false,MUTED);
+  footer("Results update during scan");
   const uint16_t ports[]={21,22,23,53,80,139,443,445,3389,8080};
   int found=0;
   for(uint32_t number=first;;++number){
     IPAddress ip=netIpAddress(number);
     String openPorts;
-    // Update just the progress area, keeping previous output off screen.
-    M5Cardputer.Display.fillRect(0,68,240,22,BG);
-    line(70,ip.toString(),false,ACCENT);
+    // The current address is transient; only responding hosts remain listed.
+    M5Cardputer.Display.fillRect(0,35,240,15,BG);
+    line(36,netPaddedIp(ip),false,ACCENT);
     // A device is considered active only if a TCP connect succeeds.
     // Silent devices or filtered ports cannot be discovered this way.
     for(uint16_t port:ports){
@@ -739,8 +765,14 @@ static void netLanScan(){
       }
     }
     if(openPorts.length()){
-      netOutput+=ip.toString()+"  "+openPorts+"\n";
+      String hostLine=netPaddedIp(ip)+"  "+openPorts;
+      netOutput+=hostLine+"\n";
       ++found;
+      // Show the newest four discoveries immediately as the scan continues.
+      // Earlier hits remain in netOutput for scrolling on the results screen.
+      const int slot=(found-1)%4;
+      if(slot==0) M5Cardputer.Display.fillRect(0,65,240,54,BG);
+      line(67+slot*13,hostLine.substring(0,38));
     }
     if(number==last)break;
     delay(1);
@@ -980,7 +1012,11 @@ static void handleKeys(const Keys& k) {
         case 0: openFiles(); break;
         case 1: startUsb(); break;
         case 2: scanWifi(); break;
-        case 3: screen=Screen::Network;netMenuIndex=0;draw();break;
+        case 3:
+          if(WiFi.status()==WL_CONNECTED) {
+            screen=Screen::Network;netMenuIndex=0;draw();
+          } else showMessage("Connect to WiFi first",Screen::Home);
+          break;
         case 4: scanBluetooth(); break;
         case 5:
           screen = Screen::Infrared;
@@ -988,6 +1024,7 @@ static void handleKeys(const Keys& k) {
           break;
         case 6:
           screen = Screen::Status;
+          statusScroll=0;
           drawStatus();
           break;
         case 7: break; // About: placeholder
@@ -1105,7 +1142,9 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::Status) {
     if(escape||backspace||typed(k,'b')) {goHome();return;}
     if(typed(k,'r')) {drawStatus();return;}
-    return;
+    if(up && statusScroll>0)--statusScroll;
+    if(down && statusScroll<8)++statusScroll;
+    drawStatus();return;
   } else if(screen==Screen::Files) {
     if (up && selected>0) --selected;
     if (down && selected+1<entries.size()) ++selected;
@@ -1207,6 +1246,11 @@ void loop() {
       WiFi.disconnect(false,false);
       showWifiConnectionResult(false);
     }
+  }
+  if((screen==Screen::Network || screen==Screen::NetInfo ||
+      screen==Screen::NetInput || screen==Screen::NetResult) &&
+      WiFi.status()!=WL_CONNECTED) {
+    showMessage("WiFi disconnected",Screen::Home);
   }
   // Poll only on the launcher; never touch filesystem while host owns the SD.
   if (!usbActive && screen==Screen::Home && (int32_t)(millis()-sdCheckAt)>=0) {
