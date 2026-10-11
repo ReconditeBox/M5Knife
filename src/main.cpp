@@ -10,6 +10,10 @@
 #include <USBMSC.h>
 #include <tusb.h>
 #include <WiFi.h>
+#include <lwip/sockets.h>
+#include <lwip/inet.h>
+#include <lwip/netdb.h>
+#include <unistd.h>
 #include <esp_system.h>
 #include <BLEDevice.h>
 #include <BLEScan.h>
@@ -23,7 +27,7 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting };
 enum class Action { None, Mkdir, Rename, Delete };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -40,6 +44,18 @@ static std::vector<ScanEntry> scanEntries;
 static size_t scanSelection = 0, scanScroll = 0;
 static String scanStatus;
 static bool bleInitialized = false;
+static int netMenuIndex=0;
+static bool netPingMode=false;
+static int netTool=0;
+static size_t netResultScroll=0;
+static String netTarget, netOutput;
+static String netDefaultTarget="8.8.8.8";
+static void drawNetworkMenu();
+static void drawNetworkInfo();
+static void drawNetworkInput();
+static void drawNetworkResult();
+static void runNetworkQuery();
+
 static int irMenuIndex=0, irEditField=0;
 static uint16_t irAddress=0;
 static uint8_t irCommand=0;
@@ -216,7 +232,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.4.0", 5, 5);
+  d.drawString("M5KNIFE 0.4.1", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -437,9 +453,9 @@ static void scanDir() {
 static void drawHome() {
   header("HOME");
   auto& d = M5Cardputer.Display;
-  const char* labels[7] = {"FILES", "USB", "WIFI", "BLUETOOTH", "INFRARED", "STATUS", "ABOUT"};
+  const char* labels[8] = {"FILES", "USB", "WIFI", "NETWORK", "BLUETOOTH", "INFRARED", "STATUS", "ABOUT"};
   // Three visible tiles. Keep the selection centred where possible.
-  const int first = std::min(4, std::max(0, homeIndex - 1));
+  const int first = std::min(5, std::max(0, homeIndex - 1));
   for (int slot = 0; slot < 3; ++slot) {
     const int i = first + slot;
     const int x = 8 + slot * 78;
@@ -466,17 +482,24 @@ static void drawHome() {
       d.drawArc(cx,cy+9,20,17,220,320,ink);
       d.drawArc(cx,cy+9,13,10,220,320,ink);
       d.fillCircle(cx,cy+8,3,ink);
-    } else if (i == 3) { // Bluetooth
+    } else if (i == 3) { // Network: interconnected nodes
+      d.drawLine(cx-11,cy+9,cx,cy-11,ink);
+      d.drawLine(cx,cy-11,cx+12,cy+9,ink);
+      d.drawLine(cx-11,cy+9,cx+12,cy+9,ink);
+      d.fillCircle(cx-11,cy+9,4,ink);
+      d.fillCircle(cx+12,cy+9,4,ink);
+      d.fillCircle(cx,cy-11,4,ink);
+    } else if (i == 4) { // Bluetooth
       d.drawLine(cx,cy-15,cx,cy+15,ink);
       d.drawLine(cx,cy-15,cx+10,cy-7,ink);
       d.drawLine(cx+10,cy-7,cx-8,cy+8,ink);
       d.drawLine(cx-8,cy-8,cx+10,cy+7,ink);
       d.drawLine(cx+10,cy+7,cx,cy+15,ink);
-    } else if (i == 4) { // Infrared: emitter and signal waves
+    } else if (i == 5) { // Infrared: emitter and signal waves
       d.fillCircle(cx-9,cy,4,ink);
       d.drawArc(cx-10,cy,11,9,300,60,ink);
       d.drawArc(cx-10,cy,18,16,300,60,ink);
-    } else if (i == 5) { // Status: gauge
+    } else if (i == 6) { // Status: gauge
       d.drawCircle(cx,cy,13,ink);
       d.drawLine(cx,cy,cx+7,cy-7,ink);
       d.fillCircle(cx,cy,2,ink);
@@ -489,7 +512,7 @@ static void drawHome() {
     d.drawCenterString(labels[i], cx, y+53);
   }
   d.setTextColor(MUTED, BG);
-  d.drawCenterString(String(homeIndex+1) + " / 7", 120, 104);
+  d.drawCenterString(String(homeIndex+1) + " / 8", 120, 104);
   footer("A/D or arrows: scroll  Enter  G0");
 }
 static void drawFiles() {
@@ -606,6 +629,179 @@ static void drawIrRemote() {
   }
   footer("W/S choose Enter send B back");
 }
+static void drawNetworkMenu() {
+  header("NETWORK");
+  const char* options[]={"Network info","DNS lookup","Ping","TCP port scan","LAN scanner"};
+  for(int i=0;i<5;++i)line(23+i*18,options[i],i==netMenuIndex);
+  if(WiFi.status()!=WL_CONNECTED)line(101,"WiFi not connected",false,WARN);
+  footer("W/S select Enter  B/G0 back");
+}
+static void drawNetworkInfo() {
+  header("NETWORK INFO");
+  if(WiFi.status()!=WL_CONNECTED) {
+    line(40,"WiFi is not connected",false,WARN);
+  } else {
+    line(21,"IP: "+WiFi.localIP().toString());
+    line(34,"GW: "+WiFi.gatewayIP().toString());
+    line(47,"Mask: "+WiFi.subnetMask().toString());
+    line(60,"DNS: "+WiFi.dnsIP().toString());
+    line(73,"MAC: "+WiFi.macAddress());
+    line(86,"SSID: "+WiFi.SSID().substring(0,28));
+    line(99,"RSSI: "+String(WiFi.RSSI())+" dBm");
+  }
+  footer("Enter/B back G0 home");
+}
+static void drawNetworkInput() {
+  header(netTool==2?"PING HOST":netTool==1?"DNS LOOKUP":netTool==3?"TCP PORT SCAN":"LAN RANGE");
+  line(27,netTool==4?"StartIP-EndIP:":netTool==3?"Host (common ports):":"Address or hostname:",false,ACCENT);
+  line(51,netTarget.length()>35?netTarget.substring(netTarget.length()-35):netTarget);
+  footer("Enter run  Del delete Fn+\x60 cancel");
+}
+static void drawNetworkResult() {
+  header(netTool==2?"PING RESULT":netTool==1?"DNS RESULT":netTool==3?"PORT RESULTS":"LAN RESULTS");
+  size_t pos=0, row=0; int y=23;
+  while(pos<netOutput.length() && y<=108){
+    int end=netOutput.indexOf('\n',pos);
+    if(end<0)end=netOutput.length();
+    if(row++>=netResultScroll){
+      line(y,netOutput.substring(pos,end).substring(0,38));
+      y+=14;
+    }
+    pos=end+1;
+  }
+  footer("W/S scroll  B back  G0 home");
+}
+static uint16_t netChecksum(const uint8_t *p,size_t len){
+  uint32_t sum=0;
+  for(size_t i=0;i+1<len;i+=2)sum+=((uint16_t)p[i]<<8)|p[i+1];
+  if(len&1)sum+=(uint16_t)p[len-1]<<8;
+  while(sum>>16)sum=(sum&65535)+(sum>>16);
+  return (uint16_t)~sum;
+}
+// Short TCP connect attempts; intended for troubleshooting networks you control.
+static bool netResolve(const String& host,IPAddress& address){
+  return address.fromString(host) || WiFi.hostByName(host.c_str(),address);
+}
+static void netPortScan(){
+  IPAddress ip;
+  if(!netResolve(netTarget,ip)){netOutput="Host resolution failed";return;}
+  const uint16_t ports[]={21,22,23,25,53,80,110,139,443,445,3389,8080};
+  netOutput=ip.toString()+"\n";
+  int opened=0;
+  for(uint16_t port:ports){
+    WiFiClient client;
+    bool ok=client.connect(ip,port,180);
+    client.stop();
+    if(ok){netOutput+=String(port)+" OPEN\n";++opened;}
+    delay(1);
+  }
+  if(!opened)netOutput+="No listed ports open";
+}
+static uint32_t netIpNumber(IPAddress ip){
+  return ((uint32_t)ip[0]<<24)|((uint32_t)ip[1]<<16)|((uint32_t)ip[2]<<8)|ip[3];
+}
+static IPAddress netIpAddress(uint32_t value){
+  return IPAddress((uint8_t)(value>>24),(uint8_t)(value>>16),(uint8_t)(value>>8),(uint8_t)value);
+}
+static void netLanScan(){
+  int separator=netTarget.indexOf('-');
+  if(separator<0){netOutput="Use startIP-endIP";return;}
+  IPAddress from,to;
+  if(!from.fromString(netTarget.substring(0,separator)) ||
+     !to.fromString(netTarget.substring(separator+1))){
+    netOutput="Invalid IPv4 range";return;
+  }
+  uint32_t first=netIpNumber(from),last=netIpNumber(to);
+  if(last<first || (uint64_t)last-first+1>256){
+    netOutput="Select 1 to 256 addresses";return;
+  }
+  netOutput="Active hosts:\n";
+  header("LAN SCANNING");
+  line(23,"Scanning selected range",false,ACCENT);
+  line(52,"Checking:",false,MUTED);
+  const uint16_t ports[]={21,22,23,53,80,139,443,445,3389,8080};
+  int found=0;
+  for(uint32_t number=first;;++number){
+    IPAddress ip=netIpAddress(number);
+    String openPorts;
+    // Update just the progress area, keeping previous output off screen.
+    M5Cardputer.Display.fillRect(0,68,240,22,BG);
+    line(70,ip.toString(),false,ACCENT);
+    // A device is considered active only if a TCP connect succeeds.
+    // Silent devices or filtered ports cannot be discovered this way.
+    for(uint16_t port:ports){
+      WiFiClient client;
+      bool open=client.connect(ip,port,60);
+      client.stop();
+      if(open){
+        if(openPorts.length())openPorts+=",";
+        openPorts+=String(port);
+      }
+    }
+    if(openPorts.length()){
+      netOutput+=ip.toString()+"  "+openPorts+"\n";
+      ++found;
+    }
+    if(number==last)break;
+    delay(1);
+  }
+  if(!found)netOutput+="None found (TCP only)";
+  // runNetworkQuery() draws the final results, removing scan progress.
+}
+static void runNetworkQuery(){
+  netOutput="";
+  if(WiFi.status()!=WL_CONNECTED)netOutput="Connect to WiFi first.";
+  else if(netTool==4)netLanScan();
+  else if(netTool==3)netPortScan();
+
+  else if(netTarget.isEmpty())netOutput="Enter a host.";
+  else{
+    IPAddress address;
+    bool ok=address.fromString(netTarget);
+    if(!ok)ok=WiFi.hostByName(netTarget.c_str(),address);
+    if(!ok)netOutput="DNS resolution failed.";
+    else if(!netPingMode)netOutput=netTarget+"\n"+address.toString();
+    else{
+      netOutput=netTarget+"\n"+address.toString()+"\n";
+      int fd=socket(AF_INET,SOCK_RAW,IPPROTO_ICMP);
+      if(fd<0)netOutput+="ICMP socket unavailable";
+      else{
+        sockaddr_in destination={};
+        destination.sin_family=AF_INET;
+        destination.sin_addr.s_addr=(uint32_t)address;
+        struct timeval timeout={1,0};
+        setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+        const uint16_t ident=(uint16_t)(millis()&65535);
+        for(int seq=1;seq<=3;++seq){
+          uint8_t packet[16]={8,0,0,0,(uint8_t)(ident>>8),(uint8_t)ident,0,(uint8_t)seq};
+          for(int i=8;i<16;++i)packet[i]=(uint8_t)i;
+          uint16_t checksum=netChecksum(packet,sizeof(packet));
+          packet[2]=(uint8_t)(checksum>>8);packet[3]=(uint8_t)checksum;
+          uint32_t began=millis();
+          bool reply=false;
+          if(sendto(fd,packet,sizeof(packet),0,(sockaddr*)&destination,sizeof(destination))>=0){
+            uint8_t received[128];
+            uint32_t deadline=began+1000;
+            while((int32_t)(deadline-millis())>0){
+              int len=recv(fd,received,sizeof(received),0);
+              if(len<=0)break;
+              int off=(received[0]>>4)==4 ? (received[0]&15)*4:0;
+              if(len>=off+8 && received[off]==0 && received[off+1]==0 &&
+                 received[off+4]==packet[4] && received[off+5]==packet[5] &&
+                 received[off+6]==0 && received[off+7]==(uint8_t)seq){reply=true;break;}
+            }
+          }
+          netOutput+=String(seq)+": "+(reply?String(millis()-began)+" ms":"timeout")+"\n";
+          delay(100);
+        }
+        close(fd);
+      }
+    }
+  }
+  netResultScroll=0;
+  screen=Screen::NetResult;draw();
+}
+
 static void drawDisk() {
   header("FILES / DISK");
   line(29, "SD card operations", false, ACCENT);
@@ -716,6 +912,10 @@ static void draw() {
     case Screen::Confirm: drawConfirm(); break;
     case Screen::Message: drawMessage(); break;
     case Screen::Wifi: drawScan(true); break;
+    case Screen::Network: drawNetworkMenu(); break;
+    case Screen::NetInfo: drawNetworkInfo(); break;
+    case Screen::NetInput: drawNetworkInput(); break;
+    case Screen::NetResult: drawNetworkResult(); break;
     case Screen::Bluetooth: drawScan(false); break;
     case Screen::Infrared: drawIrMenu(); break;
     case Screen::IrManual: drawIrManual(); break;
@@ -773,26 +973,60 @@ static void handleKeys(const Keys& k) {
   const bool backspace=k.del && !k.fn;
   if(screen==Screen::Home) {
     if(left && homeIndex > 0) --homeIndex;
-    if(right && homeIndex < 6) ++homeIndex;
+    if(right && homeIndex < 7) ++homeIndex;
     if(k.enter) {
-      // Explicit dispatch for all six launcher tiles.
+      // Explicit dispatch for all eight launcher tiles.
       switch (homeIndex) {
         case 0: openFiles(); break;
         case 1: startUsb(); break;
         case 2: scanWifi(); break;
-        case 3: scanBluetooth(); break;
-        case 4:
+        case 3: screen=Screen::Network;netMenuIndex=0;draw();break;
+        case 4: scanBluetooth(); break;
+        case 5:
           screen = Screen::Infrared;
           draw();
           break;
-        case 5:
+        case 6:
           screen = Screen::Status;
           drawStatus();
           break;
-        case 6: break; // About: placeholder
+        case 7: break; // About: placeholder
       }
       return;
     }
+  } else if(screen==Screen::Network) {
+    if(escape||backspace||typed(k,'b')){goHome();return;}
+    if(up && netMenuIndex>0)--netMenuIndex;
+    if(down && netMenuIndex<4)++netMenuIndex;
+    if(k.enter){
+      if(netMenuIndex==0){screen=Screen::NetInfo;draw();return;}
+      netTool=netMenuIndex;
+      netPingMode=(netTool==2);
+      if(netTool==4){
+        IPAddress ip=WiFi.localIP(),mask=WiFi.subnetMask();
+        uint32_t base=netIpNumber(ip)&netIpNumber(mask);
+        uint32_t broadcast=base|(~netIpNumber(mask));
+        uint32_t first=base+1,last=broadcast>base+1?broadcast-1:base+1;
+        if((uint64_t)last-first+1>256)last=first+255;
+        netTarget=netIpAddress(first).toString()+"-"+netIpAddress(last).toString();
+      } else netTarget=netTool==2?netDefaultTarget:netTool==3?WiFi.gatewayIP().toString():"";
+
+      screen=Screen::NetInput;draw();return;
+    }
+  } else if(screen==Screen::NetInfo) {
+    if(escape||backspace||typed(k,'b')||k.enter){screen=Screen::Network;draw();return;}
+  } else if(screen==Screen::NetInput) {
+    if(escape){screen=Screen::Network;draw();return;}
+    if(k.enter){
+      runNetworkQuery();return;
+    }
+    if(k.del){if(netTarget.length())netTarget.remove(netTarget.length()-1);}
+    else if(!k.fn) for(char c:k.word)
+      if(c>=33 && c<=126 && netTarget.length()<63)netTarget+=c;
+  } else if(screen==Screen::NetResult) {
+    if(escape||backspace||typed(k,'b')||k.enter){screen=Screen::Network;draw();return;}
+    if(up && netResultScroll>0)--netResultScroll;
+    if(down && netResultScroll<200)++netResultScroll;
   } else if(screen==Screen::Infrared) {
     if(escape||backspace||typed(k,'b')) {goHome();return;}
     if(up && irMenuIndex>0)--irMenuIndex;
