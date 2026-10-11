@@ -692,7 +692,9 @@ static void drawStatus() {
     "Min heap: "+String(ESP.getMinFreeHeap()/1024)+" KiB",
     "Heap size: "+String(ESP.getHeapSize()/1024)+" KiB",
     "Battery: "+String(M5.Power.getBatteryLevel())+"%",
-    "Battery: "+String(M5.Power.getBatteryVoltage())+" mV"
+    "Battery: "+String(M5.Power.getBatteryVoltage())+" mV",
+    "Clock:",
+    []()->String {struct tm t; if(!getLocalTime(&t,10))return "Not synchronised";char b[28];strftime(b,sizeof(b),"%Y-%m-%d %H:%M:%S",&t);return String(b);}()
   };
   const int total=sizeof(rows)/sizeof(rows[0]);
   if(statusScroll>total-7)statusScroll=total-7;
@@ -1063,6 +1065,7 @@ static void drawViewer(){
     offset=next+1;++number;
   }
   if(textBuffer.isEmpty())line(24,"(empty file)");
+  if(textEdit)line(108,"Append mode (8 KiB maximum)",false,MUTED);
   footer(textEdit?"Type  Enter NL  Fn+S save  B exit":"W/S scroll F find E edit B back");
 }
 static bool saveText(){
@@ -1311,7 +1314,7 @@ static void handleKeys(const Keys& k) {
     if(escape||backspace||typed(k,'b')) {goHome();return;}
     if(typed(k,'r')) {drawStatus();return;}
     if(up && statusScroll>0)--statusScroll;
-    if(down && statusScroll<8)++statusScroll;
+    if(down && statusScroll<10)++statusScroll;
     drawStatus();return;
   } else if(screen==Screen::Files) {
     if (up && selected>0) --selected;
