@@ -103,3 +103,43 @@ PASS2=another-password
 ```
 
 From the WiFi scan screen, highlight a network and press **L** to load that network's saved credentials and connect. Press **P** after successfully connecting with an entered password to add the network or update its existing password. Other stored networks are retained; the file is rewritten with consecutive numbers. **D** disconnects; **R** rescans. SSID/password values retain spaces, punctuation and equals signs. An SD card containing credentials must be kept secure: all passwords are readable by anyone who obtains the card or accesses it through USB MSC. Never use SD filesystem operations while USB MSC owns the card. This branch requires compilation and hardware testing.
+
+## Infrared transmitter (experimental)
+
+The **Infrared** launcher opens a NEC IR toolkit using Cardputer Adv's built-in IR emitter on **GPIO 44**. Select **Manual transmit** to enter hexadecimal address and command (A/C) and press Enter to send. **Remote control** provides POWER, VOLUP, VOLDOWN, CHUP, CHDOWN, MUTE commands driven by the file `/IR.CFG` on the microSD card. **Load SD profile** reads the file before using the remote; only NEC is supported so far.
+
+Example `/IR.CFG` (example values only, *not* guaranteed to work with any equipment):
+
+```ini
+[REMOTE]
+NAME=My TV
+PROTOCOL=NEC
+ADDRESS=0x00FF
+POWER=0x02
+VOLUP=0x62
+VOLDOWN=0xA8
+CHUP=0x22
+CHDOWN=0xC2
+MUTE=0xE2
+```
+
+Codes here use **NEC 16-bit address and 8-bit command**, not a raw 32-bit waveform code; convert codes accordingly. Unsupported or absent button entries are marked '(unset)'. The IR receiver/learning feature is intentionally not implemented (external receive hardware needed). Transmit only to equipment you own or have permission to control. No SD access occurs while USB MSC is active. This branch has not yet been compiled or hardware-tested.
+
+### Samsung TV infrared test
+
+`PROTOCOL=SAMSUNG` in `/IR.CFG` transmits Samsung32, using conventional MSB-first 32-bit code notation. The 16-bit ADDRESS is the first four hex digits of the full code, and each button's 8-bit command is the following two digits; the final two digits are the inverse of the command. For example `E0E040BF` means address `0xE0E0`, command `0x40`.
+
+```ini
+[REMOTE]
+NAME=Samsung TV
+PROTOCOL=SAMSUNG
+ADDRESS=0xE0E0
+POWER=0x40
+VOLUP=0xE0
+VOLDOWN=0xD0
+CHUP=0x48
+CHDOWN=0x08
+MUTE=0xF0
+```
+
+The transmitter uses IRremote's MSB-first Samsung routine for this input convention. Load the profile from the Infrared menu, enter Remote control, and try MUTE or VOLUP first. Codes are a common Samsung set and may not work for every television model. The manual transmitter remains NEC-only in this initial release; Samsung support applies to SD remote profiles. Hardware verification is pending.
