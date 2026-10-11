@@ -19,7 +19,7 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Bluetooth, Status, WifiPassword, WifiConnecting };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Bluetooth, Infrared, Status, WifiPassword, WifiConnecting };
 enum class Action { None, Mkdir, Rename, Delete };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -363,9 +363,9 @@ static void scanDir() {
 static void drawHome() {
   header("HOME");
   auto& d = M5Cardputer.Display;
-  const char* labels[6] = {"FILES", "USB", "WIFI", "BLUETOOTH", "STATUS", "ABOUT"};
+  const char* labels[7] = {"FILES", "USB", "WIFI", "BLUETOOTH", "INFRARED", "STATUS", "ABOUT"};
   // Three visible tiles. Keep the selection centred where possible.
-  const int first = std::min(3, std::max(0, homeIndex - 1));
+  const int first = std::min(4, std::max(0, homeIndex - 1));
   for (int slot = 0; slot < 3; ++slot) {
     const int i = first + slot;
     const int x = 8 + slot * 78;
@@ -398,7 +398,11 @@ static void drawHome() {
       d.drawLine(cx+10,cy-7,cx-8,cy+8,ink);
       d.drawLine(cx-8,cy-8,cx+10,cy+7,ink);
       d.drawLine(cx+10,cy+7,cx,cy+15,ink);
-    } else if (i == 4) { // Status: gauge
+    } else if (i == 4) { // Infrared: emitter and signal waves
+      d.fillCircle(cx-9,cy,4,ink);
+      d.drawArc(cx-10,cy,11,9,300,60,ink);
+      d.drawArc(cx-10,cy,18,16,300,60,ink);
+    } else if (i == 5) { // Status: gauge
       d.drawCircle(cx,cy,13,ink);
       d.drawLine(cx,cy,cx+7,cy-7,ink);
       d.fillCircle(cx,cy,2,ink);
@@ -411,7 +415,7 @@ static void drawHome() {
     d.drawCenterString(labels[i], cx, y+53);
   }
   d.setTextColor(MUTED, BG);
-  d.drawCenterString(String(homeIndex+1) + " / 6", 120, 104);
+  d.drawCenterString(String(homeIndex+1) + " / 7", 120, 104);
   footer("A/D or arrows: scroll  Enter  G0");
 }
 static void drawFiles() {
@@ -608,6 +612,11 @@ static void draw() {
     case Screen::Message: drawMessage(); break;
     case Screen::Wifi: drawScan(true); break;
     case Screen::Bluetooth: drawScan(false); break;
+    case Screen::Infrared:
+      header("INFRARED");
+      line(43,"Infrared tools coming soon",false,ACCENT);
+      footer("G0 return to menu");
+      break;
     case Screen::Status: drawStatus(); break;
     case Screen::WifiPassword: drawWifiPassword(); break;
     case Screen::WifiConnecting: drawWifiConnecting(); break;
@@ -660,7 +669,7 @@ static void handleKeys(const Keys& k) {
   const bool backspace=k.del && !k.fn;
   if(screen==Screen::Home) {
     if(left && homeIndex > 0) --homeIndex;
-    if(right && homeIndex < 5) ++homeIndex;
+    if(right && homeIndex < 6) ++homeIndex;
     if(k.enter) {
       // Explicit dispatch for all six launcher tiles.
       switch (homeIndex) {
@@ -669,10 +678,14 @@ static void handleKeys(const Keys& k) {
         case 2: scanWifi(); break;
         case 3: scanBluetooth(); break;
         case 4:
+          screen = Screen::Infrared;
+          draw();
+          break;
+        case 5:
           screen = Screen::Status;
           drawStatus();
           break;
-        case 5: break; // About: placeholder
+        case 6: break; // About: placeholder
       }
       return;
     }
