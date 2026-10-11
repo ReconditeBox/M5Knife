@@ -989,9 +989,8 @@ static void httpUploadDone(){
 static void startHttpFiles(){
   if(WiFi.status()!=WL_CONNECTED){showMessage("Connect to WiFi first",Screen::Network);return;}
   if(usbActive || (!sdReady && !mountSd())){showMessage("SD unavailable",Screen::Network);return;}
-  // New password on each launch, shown only on the Cardputer's display.
-  char password[9];snprintf(password,sizeof(password),"%08lu",(unsigned long)(esp_random()%100000000UL));
-  httpPassword=password;
+  // Default HTTP Basic authentication password.
+  httpPassword="1234";
   httpRequests=0;httpUploadFailed=false;httpUploadPath="";
   if(!httpRoutesRegistered){
   httpFiles.on("/",HTTP_GET,httpPage);
