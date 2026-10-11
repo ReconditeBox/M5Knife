@@ -722,6 +722,12 @@ static uint32_t netIpNumber(IPAddress ip){
 static IPAddress netIpAddress(uint32_t value){
   return IPAddress((uint8_t)(value>>24),(uint8_t)(value>>16),(uint8_t)(value>>8),(uint8_t)value);
 }
+static String netPaddedIp(IPAddress ip){
+  char buffer[16];
+  snprintf(buffer,sizeof(buffer),"%03u.%03u.%03u.%03u",
+    (unsigned)ip[0],(unsigned)ip[1],(unsigned)ip[2],(unsigned)ip[3]);
+  return String(buffer);
+}
 static void netLanScan(){
   int separator=netTarget.indexOf('-');
   if(separator<0){netOutput="Use startIP-endIP";return;}
@@ -746,7 +752,7 @@ static void netLanScan(){
     String openPorts;
     // The current address is transient; only responding hosts remain listed.
     M5Cardputer.Display.fillRect(0,35,240,15,BG);
-    line(36,ip.toString(),false,ACCENT);
+    line(36,netPaddedIp(ip),false,ACCENT);
     // A device is considered active only if a TCP connect succeeds.
     // Silent devices or filtered ports cannot be discovered this way.
     for(uint16_t port:ports){
@@ -759,7 +765,7 @@ static void netLanScan(){
       }
     }
     if(openPorts.length()){
-      String hostLine=ip.toString()+"  "+openPorts;
+      String hostLine=netPaddedIp(ip)+"  "+openPorts;
       netOutput+=hostLine+"\n";
       ++found;
       // Show the newest four discoveries immediately as the scan continues.
