@@ -2,6 +2,9 @@
 #include <M5Cardputer.h>
 #include <SPI.h>
 #include <SD.h>
+#include <USB.h>
+#include <USBMSC.h>
+#include <cstring>
 #include <vector>
 #include <algorithm>
 
@@ -23,6 +26,53 @@ static bool sdReady = false;
 static size_t selected = 0, scrollPos = 0;
 static int homeIndex = 0, diskIndex = 0;
 static bool waitingKeyRelease = false;
+static USBMSC msc;
+static bool usbActive = false;
+static volatile bool usbEjected = false, usbConnected = false, usbWriting = false;
+static uint32_t sdCheckAt = 0;
+static constexpr uint32_t SD_CHECK_INTERVAL = 2500;
+// MSC callbacks run in the USB task, never access the FAT filesystem while active.
+static int32_t mscRead(uint32_t lba, uint32_t offset, void* buffer, uint32_t size) {
+  const uint32_t count = SD.numSectors();
+  if (!usbActive || !count || offset >= 512 || (uint64_t)lba*512+offset+size > (uint64_t)count*512) return -1;
+  uint8_t sector[512];
+  uint8_t* out = (uint8_t*)buffer;
+  uint32_t pos = 0;
+  while (pos < size) {
+    uint32_t n = lba + (offset+pos)/512, off = (offset+pos)%512;
+    uint32_t bytes = std::min(512U-off, size-pos);
+    if (!SD.readRAW(sector,n)) return -1;
+    memcpy(out+pos,sector+off,bytes); pos += bytes;
+  }
+  return (int32_t)size;
+}
+static int32_t mscWrite(uint32_t lba, uint32_t offset, uint8_t* buffer, uint32_t size) {
+  const uint32_t count = SD.numSectors();
+  if (!usbActive || !count || offset >= 512 || (uint64_t)lba*512+offset+size > (uint64_t)count*512) return -1;
+  usbWriting = true;
+  uint8_t sector[512]; uint32_t pos = 0;
+  while (pos < size) {
+    uint32_t n = lba + (offset+pos)/512, off = (offset+pos)%512;
+    uint32_t bytes = std::min(512U-off,size-pos);
+    if ((off || bytes != 512) && !SD.readRAW(sector,n)) {usbWriting=false; return -1;}
+    memcpy(sector+off,buffer+pos,bytes);
+    if (!SD.writeRAW(sector,n)) {usbWriting=false; return -1;}
+    pos += bytes;
+  }
+  usbWriting = false;
+  return (int32_t)size;
+}
+static bool mscStartStop(uint8_t, bool start, bool eject) {
+  if (eject && !start) usbEjected = true;
+  if (start) usbEjected = false;
+  return true;
+}
+static void usbEvent(void*, esp_event_base_t base, int32_t event, void*) {
+  if (base != ARDUINO_USB_EVENTS) return;
+  if (event == ARDUINO_USB_STARTED_EVENT) usbConnected = true;
+  if (event == ARDUINO_USB_STOPPED_EVENT) usbConnected = false;
+}
+
 
 static void header(const char* text) {
   auto& d = M5Cardputer.Display;
@@ -167,10 +217,36 @@ static void drawDisk() {
 static void drawUsb() {
   header("USB");
   line(27, "USB SD-card reader", false, ACCENT);
-  line(47, "Not enabled in this build.", false, WARN);
-  line(65, "MSC needs raw-sector SD access");
-  line(80, "and safe host ejection logic.");
-  footer("G0  main menu");
+  if (!usbActive) { line(48, "No SD card mounted", false, WARN); footer("G0 main menu"); return; }
+  line(47, usbEjected ? "Drive ejected by host" : "Eject drive on PC first", false, usbEjected ? ACCENT : WARN);
+  line(67, usbConnected ? "USB connection active" : "Connect USB cable");
+  line(88, "File manager disabled");
+  footer("G0 after eject/unplug");
+}
+static void stopUsb() {
+  msc.mediaPresent(false);
+  msc.end();
+  USB.end();
+  usbActive = false;
+  usbConnected = false;
+  usbEjected = false;
+  SD.end();
+  sdReady = false;
+  mountSd();
+  sdCheckAt = millis() + SD_CHECK_INTERVAL;
+}
+static void startUsb() {
+  if (!mountSd()) {screen=Screen::Usb;draw();return;}
+  if (SD.sectorSize()!=512 || SD.numSectors()==0) {screen=Screen::Usb;draw();return;}
+  usbEjected=false; usbConnected=false;
+  msc.vendorID("M5STACK");
+  msc.productID("CARDPUTER SD");
+  msc.productRevision("1.0");
+  msc.onRead(mscRead); msc.onWrite(mscWrite); msc.onStartStop(mscStartStop);
+  msc.isWritable(true); msc.mediaPresent(true);
+  usbActive=true;
+  if (!msc.begin(SD.numSectors(),512) || !USB.begin()) {stopUsb();screen=Screen::Usb;draw();return;}
+  screen=Screen::Usb;draw();
 }
 static void drawInput() {
   header(action==Action::Mkdir?"NEW FOLDER":"RENAME");
@@ -272,7 +348,7 @@ static void handleKeys(const Keys& k) {
     if(right && homeIndex < 5) ++homeIndex;
     if(k.enter) {
       if(homeIndex==0) openFiles();
-      else if(homeIndex==1) {screen=Screen::Usb;draw();}
+      else if(homeIndex==1) startUsb();
       // WiFi, Bluetooth, Status and About are inactive placeholders.
       return;
     }
@@ -328,15 +404,30 @@ void setup() {
   M5Cardputer.Display.setTextSize(1);
   Serial.begin(115200);
   sdReady=mountSd();
+  sdCheckAt=millis()+SD_CHECK_INTERVAL;
+  USB.onEvent(usbEvent);
   draw();
 }
 void loop() {
   M5Cardputer.update();
   // G0 is globally handled BEFORE all tool-specific keyboard processing.
-  if(M5Cardputer.BtnA.wasPressed()) {goHome();waitingKeyRelease=true;}
+  if(M5Cardputer.BtnA.wasPressed()) {
+    if (usbActive) {
+      if ((!usbConnected || usbEjected) && !usbWriting) {stopUsb();goHome();}
+      else drawUsb();
+    } else goHome();
+    waitingKeyRelease=true;
+  }
   if(M5Cardputer.BtnA.wasReleased()) waitingKeyRelease=false;
   if(waitingKeyRelease) {delay(5);return;}
   if(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed())
     handleKeys(M5Cardputer.Keyboard.keysState());
+  // Poll only on the launcher; never touch filesystem while host owns the SD.
+  if (!usbActive && screen==Screen::Home && (int32_t)(millis()-sdCheckAt)>=0) {
+    bool was=sdReady;
+    mountSd();
+    sdCheckAt=millis()+SD_CHECK_INTERVAL;
+    if (was!=sdReady) draw();
+  }
   delay(10);
 }
