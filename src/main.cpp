@@ -28,12 +28,15 @@ static int homeIndex = 0, diskIndex = 0;
 static bool waitingKeyRelease = false;
 static USBMSC msc;
 static bool usbActive = false;
+static bool usbConfigured = false;
+static uint32_t usbSectorCount = 0;
+static uint8_t probeSector[512];
 static volatile bool usbEjected = false, usbConnected = false, usbWriting = false;
 static uint32_t sdCheckAt = 0;
 static constexpr uint32_t SD_CHECK_INTERVAL = 2500;
 // MSC callbacks run in the USB task, never access the FAT filesystem while active.
 static int32_t mscRead(uint32_t lba, uint32_t offset, void* buffer, uint32_t size) {
-  const uint32_t count = SD.numSectors();
+  const uint32_t count = usbSectorCount;
   if (!usbActive || !count || offset >= 512 || (uint64_t)lba*512+offset+size > (uint64_t)count*512) return -1;
   uint8_t sector[512];
   uint8_t* out = (uint8_t*)buffer;
@@ -47,7 +50,7 @@ static int32_t mscRead(uint32_t lba, uint32_t offset, void* buffer, uint32_t siz
   return (int32_t)size;
 }
 static int32_t mscWrite(uint32_t lba, uint32_t offset, uint8_t* buffer, uint32_t size) {
-  const uint32_t count = SD.numSectors();
+  const uint32_t count = usbSectorCount;
   if (!usbActive || !count || offset >= 512 || (uint64_t)lba*512+offset+size > (uint64_t)count*512) return -1;
   usbWriting = true;
   uint8_t sector[512]; uint32_t pos = 0;
@@ -120,6 +123,15 @@ static bool mountSd() {
     return false;
   }
   sdReady = true;
+  return true;
+}
+static bool probeSd() {
+  if (!sdReady) return mountSd();
+  if (SD.cardType()==CARD_NONE || !SD.cardSize() || !SD.readRAW(probeSector, 0)) {
+    sdReady=false;
+    SD.end();
+    return false;
+  }
   return true;
 }
 static void scanDir() {
@@ -219,33 +231,29 @@ static void drawUsb() {
   line(27, "USB SD-card reader", false, ACCENT);
   if (!usbActive) { line(48, "No SD card mounted", false, WARN); footer("G0 main menu"); return; }
   line(47, usbEjected ? "Drive ejected by host" : "Eject drive on PC first", false, usbEjected ? ACCENT : WARN);
-  line(67, usbConnected ? "USB connection active" : "Connect USB cable");
+  line(67, usbConnected ? "USB controller started" : "USB controller not ready");
   line(88, "File manager disabled");
   footer("G0 after eject/unplug");
 }
 static void draw();
 static void stopUsb() {
+  // USB stays enumerated. The host must eject the drive before G0 can
+  // withdraw its media; on re-entry Windows sees fresh media.
   msc.mediaPresent(false);
-  msc.end();
   usbActive = false;
-  usbConnected = false;
   usbEjected = false;
   SD.end();
   sdReady = false;
-  mountSd();
   sdCheckAt = millis() + SD_CHECK_INTERVAL;
 }
 static void startUsb() {
   if (!mountSd()) {screen=Screen::Usb;draw();return;}
   if (SD.sectorSize()!=512 || SD.numSectors()==0) {screen=Screen::Usb;draw();return;}
-  usbEjected=false; usbConnected=false;
-  msc.vendorID("M5STACK");
-  msc.productID("CARDPUTER SD");
-  msc.productRevision("1.0");
-  msc.onRead(mscRead); msc.onWrite(mscWrite); msc.onStartStop(mscStartStop);
-  msc.mediaPresent(true);
+  if (!usbConfigured) {screen=Screen::Usb;draw();return;}
+  usbSectorCount=SD.numSectors();
+  usbEjected=false;
   usbActive=true;
-  if (!msc.begin(SD.numSectors(),512) || !USB.begin()) {stopUsb();screen=Screen::Usb;draw();return;}
+  msc.mediaPresent(true);
   screen=Screen::Usb;draw();
 }
 static void drawInput() {
@@ -299,7 +307,7 @@ static void draw() {
   }
 }
 static void goHome() { screen=Screen::Home; action=Action::None; draw(); }
-static void openFiles() { mountSd(); cwd="/"; scanDir(); screen=Screen::Files; draw(); }
+static void openFiles() { if (!sdReady) mountSd(); cwd="/"; scanDir(); screen=Screen::Files; draw(); }
 static void showMessage(const String& s, Screen back=Screen::Files) {
   message=s; returnScreen=back; screen=Screen::Message; draw();
 }
@@ -359,7 +367,7 @@ static void handleKeys(const Keys& k) {
     if(selected>=scrollPos+6) scrollPos=selected-5;
     if(k.enter) {activateFile();return;}
     if(escape||backspace||typed(k,'b')) {backFile();return;}
-    if(typed(k,'r')) { mountSd(); scanDir(); }
+    if(typed(k,'r')) { if (!sdReady) mountSd(); else probeSd(); scanDir(); }
     if(typed(k,'m')) {diskIndex=0;screen=Screen::Disk;draw();return;}
     if(typed(k,'n') && sdReady) {action=Action::Mkdir;inputText="";screen=Screen::Input;draw();return;}
     if(typed(k,'e') && selected<entries.size()) {action=Action::Rename;selectedPath=childPath(entries[selected].name);inputText=entries[selected].name;screen=Screen::Input;draw();return;}
@@ -406,6 +414,19 @@ void setup() {
   sdReady=mountSd();
   sdCheckAt=millis()+SD_CHECK_INTERVAL;
   USB.onEvent(usbEvent);
+  // Register MSC and begin native USB at boot so an already-connected
+  // Windows PC can enumerate the device. Present media only in USB mode.
+  msc.vendorID("M5STACK");
+  msc.productID("CARDPUTER SD");
+  msc.productRevision("1.0");
+  msc.onRead(mscRead);
+  msc.onWrite(mscWrite);
+  msc.onStartStop(mscStartStop);
+  msc.mediaPresent(false);
+  const uint32_t sectors = sdReady ? SD.numSectors() : 0;
+  // Report a large enough logical unit; actual limits enforced in callbacks.
+  usbConfigured = msc.begin(sectors ? sectors : 1048576, 512);
+  if (usbConfigured) USB.begin();
   draw();
 }
 void loop() {
@@ -425,7 +446,7 @@ void loop() {
   // Poll only on the launcher; never touch filesystem while host owns the SD.
   if (!usbActive && screen==Screen::Home && (int32_t)(millis()-sdCheckAt)>=0) {
     bool was=sdReady;
-    mountSd();
+    probeSd();
     sdCheckAt=millis()+SD_CHECK_INTERVAL;
     if (was!=sdReady) draw();
   }
