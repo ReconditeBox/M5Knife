@@ -4,6 +4,7 @@
 #include <SD.h>
 #include <USB.h>
 #include <USBMSC.h>
+#include <tusb.h>
 #include <WiFi.h>
 #include <esp_system.h>
 #include <BLEDevice.h>
@@ -81,6 +82,7 @@ static USBMSC msc;
 static bool usbActive = false;
 static bool usbConfigured = false;
 static bool usbStarted = false;
+static bool usbPhysicallyAttached = false;
 static volatile bool usbSuspended = false;
 static uint32_t usbSectorCount = 0;
 static uint8_t probeSector[512];
@@ -361,7 +363,7 @@ static void drawUsb() {
   slowR=mscSlowReads;slowW=mscSlowWrites;
   maxR=mscMaxReadMs;maxW=mscMaxWriteMs;
   portEXIT_CRITICAL(&mscStatsMux);
-  line(22,String("Host: ")+((bool)USB?"MOUNTED":"NOT MOUNTED"),false,ACCENT);
+  line(22,String("USB: ")+(usbPhysicallyAttached?"ATTACHED":"DETACHED"),false,ACCENT);
   line(36,String("Reads: ")+String(reads)+"  Writes: "+String(writes));
   line(50,String("Errors: ")+String(errors),false,errors?WARN:FG);
   line(64,String("Slow R/W: ")+String(slowR)+"/"+String(slowW));
@@ -374,6 +376,10 @@ static void draw();
 static void stopUsb() {
   // USB stays enumerated. The host must eject the drive before G0 can
   // withdraw its media; on re-entry Windows sees fresh media.
+  // Remove the whole USB device before withdrawing the media.
+  tud_disconnect();
+  usbPhysicallyAttached = false;
+  delay(80); // Allow USB task to service the detach before unmount.
   msc.mediaPresent(false);
   usbActive = false;
   usbEjected = false;
@@ -391,8 +397,11 @@ static void startUsb() {
   mscSlowReads=mscSlowWrites=mscMaxReadMs=mscMaxWriteMs=0;
   portEXIT_CRITICAL(&mscStatsMux);
   usbEjected=false;
-  usbActive=true;
+  // Advertise ready media BEFORE the host can enumerate the drive.
   msc.mediaPresent(true);
+  usbActive=true;
+  tud_connect();
+  usbPhysicallyAttached=true;
   screen=Screen::Usb;draw();
 }
 static void drawInput() {
@@ -592,7 +601,15 @@ void setup() {
   // Report a large enough logical unit; actual limits enforced in callbacks.
   usbSectorCount = sectors;
   usbConfigured = msc.begin(sectors ? sectors : 1048576, 512);
-  if (usbConfigured) usbStarted = USB.begin();
+  if (usbConfigured) {
+    usbStarted = USB.begin();
+    if (usbStarted) {
+      // Keep the device electrically detached until the SD card is
+      // ready and the user explicitly enters USB mode.
+      tud_disconnect();
+      usbPhysicallyAttached=false;
+    }
+  }
   draw();
 }
 void loop() {
