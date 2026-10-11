@@ -1,0 +1,314 @@
+#include <Arduino.h>
+#include <M5Cardputer.h>
+#include <SPI.h>
+#include <SD.h>
+#include <vector>
+#include <algorithm>
+
+// M5Stack Cardputer Adv microSD slot, shared with the original Cardputer.
+static constexpr int SD_CS = 12, SD_MOSI = 14, SD_MISO = 39, SD_SCK = 40;
+static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
+static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
+
+using Keys = Keyboard_Class::KeysState;
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message };
+enum class Action { None, Mkdir, Rename, Delete };
+struct Entry { String name; bool dir; uint64_t size; };
+
+static Screen screen = Screen::Home, returnScreen = Screen::Files;
+static Action action = Action::None;
+static std::vector<Entry> entries;
+static String cwd = "/", inputText, message, selectedPath;
+static bool sdReady = false;
+static size_t selected = 0, scrollPos = 0;
+static int homeIndex = 0, diskIndex = 0;
+static bool waitingKeyRelease = false;
+
+static void header(const char* text) {
+  auto& d = M5Cardputer.Display;
+  d.fillScreen(BG);
+  d.fillRect(0, 0, 240, 19, 0x0205);
+  d.setTextColor(ACCENT, 0x0205);
+  d.setTextSize(1);
+  d.drawString("M5 TOOLKIT", 5, 5);
+  d.setTextColor(FG, 0x0205);
+  d.drawRightString(text, 235, 5);
+}
+static void footer(const String& text) {
+  auto& d = M5Cardputer.Display;
+  d.fillRect(0, 120, 240, 15, 0x0205);
+  d.setTextColor(MUTED, 0x0205);
+  d.drawString(text, 4, 123);
+}
+static void line(int y, const String& s, bool active=false, uint16_t color=FG) {
+  auto& d = M5Cardputer.Display;
+  if (active) d.fillRoundRect(3, y-2, 234, 13, 3, SEL);
+  d.setTextColor(active ? ACCENT : color, active ? SEL : BG);
+  d.drawString(s, 7, y);
+}
+static String basenameOf(const String& p) {
+  int k = p.lastIndexOf('/'); return p.substring(k + 1);
+}
+static String childPath(const String& name) {
+  return cwd == "/" ? "/" + name : cwd + "/" + name;
+}
+static bool mountSd() {
+  SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  sdReady = SD.begin(SD_CS, SPI, 16000000);
+  return sdReady;
+}
+static void scanDir() {
+  entries.clear(); selected=scrollPos=0;
+  if (!sdReady) return;
+  File folder = SD.open(cwd.c_str());
+  if (!folder || !folder.isDirectory()) { if (folder) folder.close(); return; }
+  File f = folder.openNextFile();
+  while (f && entries.size() < 512) {
+    String name = basenameOf(String(f.name()));
+    if (name.length()) entries.push_back({name, f.isDirectory(), (uint64_t)f.size()});
+    f.close(); f = folder.openNextFile();
+  }
+  folder.close();
+  std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
+    if (a.dir != b.dir) return a.dir > b.dir;
+    String x = a.name, y = b.name; x.toLowerCase(); y.toLowerCase(); return x < y;
+  });
+}
+static void drawHome() {
+  header(sdReady ? "SD READY" : "NO SD");
+  auto& d = M5Cardputer.Display;
+  const char* labels[4] = {"FILES", "USB", "WIFI", "BLUETOOTH"};
+  for (int i = 0; i < 4; ++i) {
+    const int x = 11 + (i % 2) * 117;
+    const int y = 23 + (i / 2) * 47;
+    const bool active = (homeIndex == i);
+    const uint16_t fill = active ? SEL : 0x1082;
+    const uint16_t ink = active ? ACCENT : FG;
+    d.fillRoundRect(x, y, 102, 42, 5, fill);
+    d.drawRoundRect(x, y, 102, 42, 5, active ? ACCENT : MUTED);
+    if (i == 0) { // Files: folder symbol
+      d.fillRoundRect(x+8, y+15, 26, 17, 2, 0xFFE0);
+      d.fillRect(x+8, y+11, 12, 7, 0xFFE0);
+    } else if (i == 1) { // USB trident
+      d.drawLine(x+20,y+10,x+20,y+32,ink);
+      d.drawLine(x+20,y+10,x+16,y+15,ink);
+      d.drawLine(x+20,y+10,x+24,y+15,ink);
+      d.drawLine(x+20,y+23,x+12,y+18,ink);
+      d.fillCircle(x+12,y+18,2,ink);
+      d.drawLine(x+20,y+28,x+29,y+22,ink);
+      d.fillRect(x+27,y+20,5,5,ink);
+    } else if (i == 2) { // WiFi signal
+      d.drawArc(x+21,y+30,17,15,220,320,ink);
+      d.drawArc(x+21,y+30,11,9,220,320,ink);
+      d.fillCircle(x+21,y+29,2,ink);
+    } else { // Bluetooth rune
+      d.drawLine(x+20,y+8,x+20,y+34,ink);
+      d.drawLine(x+20,y+8,x+29,y+16,ink);
+      d.drawLine(x+29,y+16,x+13,y+28,ink);
+      d.drawLine(x+13,y+14,x+29,y+28,ink);
+      d.drawLine(x+29,y+28,x+20,y+34,ink);
+    }
+    d.setTextColor(ink,fill);
+    d.drawString(labels[i],x+39,y+17);
+  }
+  footer("WASD select  Enter open  G0 home");
+}
+static void drawFiles() {
+  header("FILES");
+  line(23, cwd.length()>38 ? "..."+cwd.substring(cwd.length()-35) : cwd, false, ACCENT);
+  if (!sdReady) { line(54, "SD not mounted", false, WARN); footer("G0 menu  R retry"); return; }
+  if (entries.empty()) line(51, "(empty directory)", false, MUTED);
+  for (int r=0; r<6; ++r) {
+    size_t i = scrollPos + r; if (i>=entries.size()) break;
+    const auto& e=entries[i];
+    String label=String(e.dir ? "> " : "  ")+e.name;
+    if (label.length()>32) label=label.substring(0,29)+"...";
+    line(39+r*13, label, selected==i);
+  }
+  footer("Fn+;,./ arrows  B back  M disk");
+}
+static void drawDisk() {
+  header("FILES / DISK");
+  line(29, "SD card operations", false, ACCENT);
+  line(51, "Card details", diskIndex==0);
+  line(66, "Format SD card", diskIndex==1);
+  footer("Up/Down  Enter  G0 home");
+}
+static void drawUsb() {
+  header("USB");
+  line(27, "USB SD-card reader", false, ACCENT);
+  line(47, "Not enabled in this build.", false, WARN);
+  line(65, "MSC needs raw-sector SD access");
+  line(80, "and safe host ejection logic.");
+  footer("G0  main menu");
+}
+static void drawInput() {
+  header(action==Action::Mkdir?"NEW FOLDER":"RENAME");
+  line(32, action==Action::Mkdir?"Folder name:":"New name:", false, ACCENT);
+  line(54, inputText.length()>33 ? inputText.substring(inputText.length()-33) : inputText);
+  footer("Type  Enter OK  Fn+` cancel");
+}
+static void drawConfirm() {
+  header("CONFIRM DELETE");
+  line(35, "Delete selected file/empty dir?", false, WARN);
+  line(57, basenameOf(selectedPath).substring(0,32));
+  footer("Y delete   N cancel   G0 home");
+}
+static void drawMessage() {
+  header("INFORMATION");
+  int y=30, from=0;
+  while (from < (int)message.length() && y<=108) {
+    int end=message.indexOf('\n',from);
+    if (end<0) end=message.length();
+    line(y,message.substring(from,end)); y+=15; from=end+1;
+  }
+  footer("Enter / G0 home");
+}
+static void drawViewer() {
+  header("VIEW TEXT");
+  File file=SD.open(selectedPath.c_str(),FILE_READ);
+  if (!file) { line(40,"Cannot open file",false,WARN); footer("B back  G0 home"); return; }
+  String row; int y=25; int chars=0;
+  while (file.available() && y<=105 && chars<2000) {
+    int c=file.read(); ++chars;
+    if (c=='\r') continue;
+    if (c=='\n' || row.length()>=37) {
+      line(y,row); y+=12; row="";
+    }
+    if (c>=32 && c<=126) row+=(char)c;
+  }
+  if (row.length() && y<=105) line(y,row);
+  file.close(); footer("Preview only  B back  G0 home");
+}
+static void draw() {
+  switch(screen) {
+    case Screen::Home: drawHome(); break;
+    case Screen::Files: drawFiles(); break;
+    case Screen::Viewer: drawViewer(); break;
+    case Screen::Disk: drawDisk(); break;
+    case Screen::Usb: drawUsb(); break;
+    case Screen::Input: drawInput(); break;
+    case Screen::Confirm: drawConfirm(); break;
+    case Screen::Message: drawMessage(); break;
+  }
+}
+static void goHome() { screen=Screen::Home; action=Action::None; draw(); }
+static void openFiles() { if (!sdReady) mountSd(); cwd="/"; scanDir(); screen=Screen::Files; draw(); }
+static void showMessage(const String& s, Screen back=Screen::Files) {
+  message=s; returnScreen=back; screen=Screen::Message; draw();
+}
+static bool hasInvalidName(const String& s) {
+  if (!s.length() || s=="." || s==".." || s.length()>100) return true;
+  for (auto c:s) if (c=='/' || c=='\\' || c==':' || c=='*' || c=='?' || c=='"' || c=='<' || c=='>' || c=='|') return true;
+  return false;
+}
+static void completeInput() {
+  if (hasInvalidName(inputText)) { showMessage("Invalid name."); return; }
+  bool ok=false;
+  String to=childPath(inputText);
+  if (SD.exists(to)) { showMessage("Name already exists."); return; }
+  if (action==Action::Mkdir) ok=SD.mkdir(to.c_str());
+  if (action==Action::Rename) ok=SD.rename(selectedPath.c_str(),to.c_str());
+  action=Action::None; scanDir(); screen=Screen::Files; draw();
+  if (!ok) showMessage("SD operation failed.");
+}
+static void activateFile() {
+  if (selected>=entries.size()) return;
+  const auto& e=entries[selected];
+  selectedPath=childPath(e.name);
+  if (e.dir) { cwd=selectedPath; scanDir(); draw(); }
+  else { screen=Screen::Viewer; draw(); }
+}
+static void backFile() {
+  if (cwd=="/") {goHome();return;}
+  int slash=cwd.lastIndexOf('/'); cwd = slash<=0 ? "/" : cwd.substring(0,slash);
+  scanDir(); draw();
+}
+static bool typed(const Keys& k, char c) {
+  for (char v:k.word) if (v==c || v==char(c-32)) return true;
+  return false;
+}
+static void handleKeys(const Keys& k) {
+  // v1.1.1 KeysState has no arrow/esc/backspace members.
+  // Fn+; , . / supplies the cursor directions; Fn+` is Escape.
+  const bool up=(k.fn && typed(k,';')) || (!k.fn && typed(k,'w'));
+  const bool down=(k.fn && typed(k,'.')) || (!k.fn && typed(k,'s'));
+  const bool left=(k.fn && typed(k,',')) || (!k.fn && typed(k,'a'));
+  const bool right=(k.fn && typed(k,'/')) || (!k.fn && typed(k,'d'));
+  const bool escape=k.fn && typed(k,'`');
+  const bool backspace=k.del && !k.fn;
+  if(screen==Screen::Home) {
+    if(left) homeIndex = (homeIndex & 2) | ((homeIndex & 1) ^ 1);
+    if(right) homeIndex = (homeIndex & 2) | ((homeIndex & 1) ^ 1);
+    if(up) homeIndex = (homeIndex + 2) % 4;
+    if(down) homeIndex = (homeIndex + 2) % 4;
+    if(k.enter) {
+      if(homeIndex==0) openFiles();
+      else if(homeIndex==1) {screen=Screen::Usb;draw();}
+      // WiFi and Bluetooth are intentionally inactive placeholders.
+      return;
+    }
+  } else if(screen==Screen::Files) {
+    if (up && selected>0) --selected;
+    if (down && selected+1<entries.size()) ++selected;
+    if(selected<scrollPos) scrollPos=selected;
+    if(selected>=scrollPos+6) scrollPos=selected-5;
+    if(k.enter) {activateFile();return;}
+    if(escape||backspace||typed(k,'b')) {backFile();return;}
+    if(typed(k,'r')) { if(!sdReady) mountSd(); scanDir(); }
+    if(typed(k,'m')) {diskIndex=0;screen=Screen::Disk;draw();return;}
+    if(typed(k,'n') && sdReady) {action=Action::Mkdir;inputText="";screen=Screen::Input;draw();return;}
+    if(typed(k,'e') && selected<entries.size()) {action=Action::Rename;selectedPath=childPath(entries[selected].name);inputText=entries[selected].name;screen=Screen::Input;draw();return;}
+    if(typed(k,'x') && selected<entries.size()) {action=Action::Delete;selectedPath=childPath(entries[selected].name);screen=Screen::Confirm;draw();return;}
+  } else if(screen==Screen::Viewer) {
+    if(escape||backspace||typed(k,'b')||k.enter) {screen=Screen::Files;draw();return;}
+  } else if(screen==Screen::Disk) {
+    if(up||down) diskIndex=1-diskIndex;
+    if(k.enter) {
+      if(diskIndex==0) {
+        if(!sdReady) showMessage("No mounted SD card.",Screen::Disk);
+        else showMessage("Capacity: "+String((uint32_t)(SD.cardSize()/1048576))+" MiB\nUsed: "+String((uint32_t)(SD.usedBytes()/1048576))+" MiB",Screen::Disk);
+      } else showMessage("Formatting NOT enabled.\nThis needs a tested FAT32\nformatter with safeguards.",Screen::Disk);
+      return;
+    }
+    if(escape||backspace) {screen=Screen::Files;draw();return;}
+  } else if(screen==Screen::Input) {
+    if(escape) {action=Action::None;screen=Screen::Files;draw();return;}
+    if(k.enter) {completeInput();return;}
+    if(k.del) {if(inputText.length()) inputText.remove(inputText.length()-1);}
+    else if(!k.fn) for(char c:k.word) if(c>=32 && c<=126 && inputText.length()<100) inputText+=c;
+  } else if(screen==Screen::Confirm) {
+    if(typed(k,'y')) {
+      bool ok=false;
+      File f=SD.open(selectedPath.c_str()); bool isDir=f && f.isDirectory(); if(f)f.close();
+      ok=isDir ? SD.rmdir(selectedPath.c_str()) : SD.remove(selectedPath.c_str());
+      scanDir();screen=Screen::Files;draw();
+      if(!ok) showMessage("Delete failed.\nDirectory must be empty.");
+      return;
+    }
+    if(typed(k,'n')||escape||backspace) {screen=Screen::Files;draw();return;}
+  } else if(screen==Screen::Message) {
+    if(k.enter||escape||backspace) {screen=returnScreen;draw();return;}
+  }
+  draw();
+}
+void setup() {
+  auto cfg=M5.config();
+  M5Cardputer.begin(cfg,true);
+  M5Cardputer.Display.setRotation(1);
+  M5Cardputer.Display.setFont(&fonts::Font0);
+  M5Cardputer.Display.setTextSize(1);
+  Serial.begin(115200);
+  sdReady=mountSd();
+  draw();
+}
+void loop() {
+  M5Cardputer.update();
+  // G0 is globally handled BEFORE all tool-specific keyboard processing.
+  if(M5Cardputer.BtnA.wasPressed()) {goHome();waitingKeyRelease=true;}
+  if(M5Cardputer.BtnA.wasReleased()) waitingKeyRelease=false;
+  if(waitingKeyRelease) {delay(5);return;}
+  if(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed())
+    handleKeys(M5Cardputer.Keyboard.keysState());
+  delay(10);
+}
