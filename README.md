@@ -159,3 +159,13 @@ Use only on networks and devices you are authorised to inspect. This revision is
 ## Scrollable Status metrics (experimental)
 
 The Status screen shows WiFi SSID and IPv4, WiFi/Bluetooth MAC addresses, SD total/used/free capacity in MiB, ESP32 heap size/free/minimum-free values in KiB, and the Cardputer battery percentage and voltage. W/S (or the keyboard's up/down keys) scroll through seven visible rows; R refreshes readings; B or G0 returns home. SD usage may take time to calculate depending on card contents. This branch has not yet been compiled or tested on the Cardputer Adv; `main` is unchanged.
+
+## High-priority tools (experimental branch)
+
+- **WiFi auto-connect:** At startup, if `AUTO_WIFI=1`, M5Knife attempts to connect to the first saved network in `/WIFI.CFG` without interrupting the launcher. Disable under Settings if unwanted. The saved WiFi profiles are still maintained in the existing WiFi menu.
+- **NTP clock:** Once WiFi connects, synchronises using pool.ntp.org/time.google.com if enabled. The synchronised local date/time appears near the bottom of the scrollable Status page. Settings provides a whole-hour UTC offset; daylight-saving changes are not automatic.
+- **Settings:** A ninth launcher tile opens settings for WiFi auto-connect, NTP sync, UTC offset, display brightness and display sleep timeout. W/S selects a row; A/D changes values. Choose **Save settings** to write `/M5KNIFE.CFG` on the SD card. Sleep turns display brightness off after inactivity; the keyboard or G0 wakes it. SD is required for persistence.
+- **Text viewer:** Files now opens a RAM-backed 8 KiB maximum text viewer. W/S scroll, F searches text, E enters editor, Fn+Escape returns to Files.
+- **Text editor:** The editor supports typing, deleting before the cursor, newline insertion, cursor navigation via Fn+cursor keys, and save using Fn+S. Edited files are saved using temporary/backup files. Unsaved changes block the normal editor exit; G0 can leave without saving. Edit only plain text files up to 8192 bytes. In Files, T creates a blank text file in the current directory, after which it can be opened and edited. This is a deliberately basic first version.
+
+This branch is **not yet compiled or hardware-tested**. Stable `main` remains at M5Knife 0.4.5 until test results are confirmed.
