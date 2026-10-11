@@ -9,16 +9,16 @@ First **development build**, independent of the Cardputer CP/M project.
 - Automatic SD card mount at boot using the Cardputer Adv's SPI SD connection.
 - Browse SD directories, open a basic text preview, create folders, rename entries, delete files or **empty** directories with confirmation.
 - SD capacity/used-space information under Files > Disk.
-- Missing-SD handling and a retry key. A card is only reported READY after card type, capacity and root-directory checks; opening Files or pressing R in Files repeats detection.
+- Missing-SD handling and a retry key. The home screen rechecks card presence about every 2.5 seconds; Files and R also retry mounting.
 
-**Not implemented yet:** FAT32 formatting; USB Mass Storage; scrolling text viewer; recursive copy/move. The Format and USB screens deliberately make no changes: raw filesystem/USB handover requires safety work and device verification. This is NOT a finished USB reader or formatter.
+**Not implemented yet:** FAT32 formatting; scrolling text viewer; recursive copy/move. USB Mass Storage has an initial experimental implementation using raw SD sectors and ESP32-S3 native USB OTG; it is NOT hardware validated. Back up the card before testing. Windows must safely eject it (or USB must disconnect) before using G0 to leave USB mode. Do not open Files while USB MSC is active.
 
 ## Keyboard
 
 - Main launcher: `A` / `D` (or Fn + left/right arrows) moves horizontally across all six icons; Enter opens Files or USB. WiFi, Bluetooth, Status, and About do nothing yet.
 - Files: `W` / `S` (or Fn + up/down) scrolls; Enter opens; `B` goes up; `N` creates folder; `E` renames; `X` deletes (confirmation); `M` opens disk operations; `R` retries SD mount / refreshes.
 - File preview: `B` backs out (preview currently shows beginning of file only).
-- G0: returns to the main launcher from **any** screen.
+- G0: returns to the main launcher from **any** screen; while USB MSC is active, first eject the drive in Windows or physically disconnect USB to reduce corruption risk.
 
 ## PlatformIO — Windows PowerShell
 
@@ -46,7 +46,8 @@ Dependency versions are pinned to avoid unexpectedly pulling newer M5GFX release
 - Always back up a microSD card before testing filesystem operations.
 - Deleting a file and renaming are real operations; formatting and MSC are *not* active.
 - G0 exits current UI screens; it cannot cancel a synchronous SD write in progress.
-- Do not mistake the USB page for a functioning mass-storage mode in this build.
+- USB MSC is experimental; test with a disposable FAT32 card, never the only copy of valuable data.
+- The build now uses native USB OTG mode (`ARDUINO_USB_MODE=0` and `ARDUINO_USB_CDC_ON_BOOT=0`). This can change serial monitor and upload behaviour. If normal upload fails, use the ESP32-S3 download/BOOT mode and the correct serial port.
 
 ## If changing from an older copy
 
