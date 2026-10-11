@@ -57,7 +57,7 @@ static String scanStatus;
 static bool bleInitialized = false;
 static int netMenuIndex=0;
 static WebServer httpFiles(80);
-static bool httpRunning=false,httpUploadFailed=false;
+static bool httpRunning=false,httpUploadFailed=false,httpRoutesRegistered=false;
 static String httpPassword,httpUploadPath;
 static File httpUploadFile;
 static uint32_t httpRequests=0;
@@ -958,6 +958,7 @@ static void httpUploadData(){
   if(!httpFiles.authenticate("m5knife",httpPassword.c_str())){httpUploadFailed=true;return;}
   HTTPUpload& upload=httpFiles.upload();
   if(upload.status==UPLOAD_FILE_START){
+    httpUploadPath="";
     httpUploadFailed=true;
     String dir=httpFolderArg();
     String name=upload.filename;
@@ -992,6 +993,7 @@ static void startHttpFiles(){
   char password[9];snprintf(password,sizeof(password),"%08lu",(unsigned long)(esp_random()%100000000UL));
   httpPassword=password;
   httpRequests=0;httpUploadFailed=false;httpUploadPath="";
+  if(!httpRoutesRegistered){
   httpFiles.on("/",HTTP_GET,httpPage);
   httpFiles.on("/download",HTTP_GET,httpDownload);
   httpFiles.on("/mkdir",HTTP_POST,httpMkdir);
@@ -999,6 +1001,8 @@ static void startHttpFiles(){
   httpFiles.on("/delete",HTTP_POST,httpDelete);
   httpFiles.on("/upload",HTTP_POST,httpUploadDone,httpUploadData);
   httpFiles.onNotFound([](){httpFiles.send(404,"text/plain","Not found");});
+  httpRoutesRegistered=true;
+  }
   httpFiles.begin();
   httpRunning=true;
   screen=Screen::HttpFiles;draw();
