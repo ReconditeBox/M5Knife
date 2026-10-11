@@ -223,10 +223,10 @@ static void drawUsb() {
   line(88, "File manager disabled");
   footer("G0 after eject/unplug");
 }
+static void draw();
 static void stopUsb() {
   msc.mediaPresent(false);
   msc.end();
-  USB.end();
   usbActive = false;
   usbConnected = false;
   usbEjected = false;
@@ -243,7 +243,7 @@ static void startUsb() {
   msc.productID("CARDPUTER SD");
   msc.productRevision("1.0");
   msc.onRead(mscRead); msc.onWrite(mscWrite); msc.onStartStop(mscStartStop);
-  msc.isWritable(true); msc.mediaPresent(true);
+  msc.mediaPresent(true);
   usbActive=true;
   if (!msc.begin(SD.numSectors(),512) || !USB.begin()) {stopUsb();screen=Screen::Usb;draw();return;}
   screen=Screen::Usb;draw();
