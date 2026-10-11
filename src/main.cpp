@@ -38,6 +38,7 @@ static String cwd = "/", inputText, message, selectedPath;
 static bool sdReady = false;
 static size_t selected = 0, scrollPos = 0;
 static int homeIndex = 0, diskIndex = 0;
+static int statusScroll=0;
 static bool waitingKeyRelease = false;
 struct ScanEntry { String label; int rssi; bool secured; };
 static std::vector<ScanEntry> scanEntries;
@@ -586,17 +587,35 @@ static String hardwareAddress(esp_mac_type_t type) {
 }
 static void drawStatus() {
   header("STATUS");
-  const bool connected = WiFi.status() == WL_CONNECTED;
-  line(23, "WiFi network", false, ACCENT);
-  String ssid = connected ? WiFi.SSID() : "Not connected";
-  if (ssid.length()>34) ssid=ssid.substring(0,31)+"...";
-  line(36, ssid);
-  line(51, "IP address", false, ACCENT);
-  line(64, connected ? WiFi.localIP().toString() : "Not connected");
-  line(79, "WiFi MAC", false, ACCENT);
-  line(91, hardwareAddress(ESP_MAC_WIFI_STA));
-  line(104, String("BT MAC: ")+hardwareAddress(ESP_MAC_BT));
-  footer("R refresh  B back  G0 menu");
+  const bool connected=WiFi.status()==WL_CONNECTED;
+  String ssid=connected?WiFi.SSID():"Not connected";
+  if(ssid.length()>30)ssid=ssid.substring(0,27)+"...";
+  String rows[]={
+    "WiFi: "+ssid,
+    "IP: "+(connected?WiFi.localIP().toString():String("Not connected")),
+    "WiFi MAC:",
+    hardwareAddress(ESP_MAC_WIFI_STA),
+    "Bluetooth MAC:",
+    hardwareAddress(ESP_MAC_BT),
+    "SD card:",
+    sdReady?String((uint32_t)(SD.cardSize()/1048576ULL))+" MiB total":"Not mounted",
+    sdReady?String((uint32_t)(SD.usedBytes()/1048576ULL))+" MiB used":"--",
+    sdReady?String((uint32_t)((SD.cardSize()-SD.usedBytes())/1048576ULL))+" MiB free":"--",
+    "Free heap: "+String(ESP.getFreeHeap()/1024)+" KiB",
+    "Min heap: "+String(ESP.getMinFreeHeap()/1024)+" KiB",
+    "Heap size: "+String(ESP.getHeapSize()/1024)+" KiB",
+    "Battery: "+String(M5.Power.getBatteryLevel())+"%",
+    "Battery: "+String(M5.Power.getBatteryVoltage())+" mV"
+  };
+  const int total=sizeof(rows)/sizeof(rows[0]);
+  if(statusScroll>total-7)statusScroll=total-7;
+  if(statusScroll<0)statusScroll=0;
+  for(int i=0;i<7 && statusScroll+i<total;++i){
+    const int n=statusScroll+i;
+    line(22+i*14,rows[n].substring(0,37),false,
+      (n==0||n==6||n==10||n==13)?ACCENT:FG);
+  }
+  footer("W/S scroll  R refresh  B back");
 }
 static void drawIrMenu() {
   header("INFRARED");
@@ -988,6 +1007,7 @@ static void handleKeys(const Keys& k) {
           break;
         case 6:
           screen = Screen::Status;
+          statusScroll=0;
           drawStatus();
           break;
         case 7: break; // About: placeholder
@@ -1105,7 +1125,9 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::Status) {
     if(escape||backspace||typed(k,'b')) {goHome();return;}
     if(typed(k,'r')) {drawStatus();return;}
-    return;
+    if(up && statusScroll>0)--statusScroll;
+    if(down && statusScroll<8)++statusScroll;
+    drawStatus();return;
   } else if(screen==Screen::Files) {
     if (up && selected>0) --selected;
     if (down && selected+1<entries.size()) ++selected;
