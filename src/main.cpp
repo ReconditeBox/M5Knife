@@ -19,7 +19,7 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Bluetooth, Status };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Bluetooth, Status, WifiPassword, WifiConnecting };
 enum class Action { None, Mkdir, Rename, Delete };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -36,6 +36,9 @@ static std::vector<ScanEntry> scanEntries;
 static size_t scanSelection = 0, scanScroll = 0;
 static String scanStatus;
 static bool bleInitialized = false;
+static String wifiTarget, wifiPassword;
+static uint32_t wifiConnectStarted = 0;
+static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 18000;
 static void draw();
 static void scanWifi() {
   scanEntries.clear(); scanSelection=scanScroll=0;
@@ -43,7 +46,7 @@ static void scanWifi() {
   scanStatus="Scanning WiFi...";
   draw();
   WiFi.mode(WIFI_STA);
-  WiFi.disconnect(false, false);
+  // Scanning must not forcibly disconnect an established connection.
   int count=WiFi.scanNetworks(false,true);
   if (count<0) scanStatus="WiFi scan failed";
   else {
@@ -306,9 +309,40 @@ static void drawFiles() {
   }
   footer("Fn+;,./ arrows  B back  M disk");
 }
+static void drawWifiPassword() {
+  header("WIFI PASSWORD");
+  line(23, "Network:", false, ACCENT);
+  line(38, wifiTarget.substring(0,34));
+  line(57, "Password:", false, ACCENT);
+  // Deliberately show entered password characters, as requested.
+  line(72, wifiPassword.substring(wifiPassword.length()>34?wifiPassword.length()-34:0));
+  footer("Enter connect  Fn+` cancel");
+}
+static void drawWifiConnecting() {
+  header("WIFI CONNECT");
+  line(32, wifiTarget.substring(0,34), false, ACCENT);
+  line(56, "Connecting...");
+  footer("G0 cancel and return home");
+}
+static void beginWifiConnection() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifiTarget.c_str(),wifiPassword.c_str());
+  wifiPassword = ""; // No credential stored by the toolkit.
+  wifiConnectStarted=millis();
+  screen=Screen::WifiConnecting;
+  drawWifiConnecting();
+}
+static void showWifiConnectionResult(bool connected) {
+  screen=Screen::Wifi;
+  scanStatus=connected ? String("Connected: ")+WiFi.localIP().toString() : "Connection failed / timed out";
+  draw();
+}
+
 static void drawScan(bool wifi) {
   header(wifi ? "WIFI SCAN" : "BLUETOOTH BLE");
-  line(21,scanStatus,false,ACCENT);
+  if (wifi && WiFi.status()==WL_CONNECTED)
+    line(21, String("Connected: ")+WiFi.SSID().substring(0,18),false,ACCENT);
+  else line(21,scanStatus,false,ACCENT);
   if(scanEntries.empty()) line(55,"No devices found",false,MUTED);
   for (int row=0;row<6;++row) {
     size_t n=scanScroll+row;
@@ -319,7 +353,7 @@ static void drawScan(bool wifi) {
     label+=" "+String(e.rssi)+"dBm";
     line(36+row*13,label,n==scanSelection);
   }
-  footer("W/S scroll  R rescan  B back  G0");
+  footer(wifi ? "Enter join  D off  R scan  G0" : "W/S scroll  R rescan  B back");
 }
 static String hardwareAddress(esp_mac_type_t type) {
   uint8_t mac[6] = {0};
@@ -455,9 +489,11 @@ static void draw() {
     case Screen::Wifi: drawScan(true); break;
     case Screen::Bluetooth: drawScan(false); break;
     case Screen::Status: drawStatus(); break;
+    case Screen::WifiPassword: drawWifiPassword(); break;
+    case Screen::WifiConnecting: drawWifiConnecting(); break;
   }
 }
-static void goHome() { screen=Screen::Home; action=Action::None; draw(); }
+static void goHome() { if(screen==Screen::WifiConnecting) WiFi.disconnect(false,false); wifiPassword=""; screen=Screen::Home; action=Action::None; draw(); }
 static void openFiles() { if (!sdReady) mountSd(); cwd="/"; scanDir(); screen=Screen::Files; draw(); }
 static void showMessage(const String& s, Screen back=Screen::Files) {
   message=s; returnScreen=back; screen=Screen::Message; draw();
@@ -520,9 +556,31 @@ static void handleKeys(const Keys& k) {
       }
       return;
     }
+  } else if(screen==Screen::WifiPassword) {
+    if (escape) {wifiPassword="";screen=Screen::Wifi;draw();return;}
+    if (k.enter) {beginWifiConnection();return;}
+    if (k.del) {if(wifiPassword.length()) wifiPassword.remove(wifiPassword.length()-1);}
+    else for(char c:k.word) if(c>=32 && c<=126 && wifiPassword.length()<63) wifiPassword+=c;
+    draw(); return;
+  } else if(screen==Screen::WifiConnecting) {
+    // The connection attempt is asynchronous; G0 is handled centrally.
+    return;
   } else if(screen==Screen::Wifi || screen==Screen::Bluetooth) {
     if (escape||backspace||typed(k,'b')) {goHome();return;}
+    if (screen==Screen::Wifi && typed(k,'d')) {
+      WiFi.disconnect(false,false);
+      scanStatus="Disconnected";
+      draw();return;
+    }
     if (typed(k,'r')) {if(screen==Screen::Wifi) scanWifi(); else scanBluetooth();return;}
+    if (screen==Screen::Wifi && k.enter && scanSelection<scanEntries.size()) {
+      const auto& network=scanEntries[scanSelection];
+      if (network.label=="<hidden>") {scanStatus="Hidden SSID unsupported";draw();return;}
+      wifiTarget=network.label;
+      wifiPassword="";
+      if (network.secured) {screen=Screen::WifiPassword;draw();return;}
+      beginWifiConnection();return;
+    }
     if (up && scanSelection>0) --scanSelection;
     if (down && scanSelection+1<scanEntries.size()) ++scanSelection;
     if (scanSelection<scanScroll) scanScroll=scanSelection;
@@ -626,6 +684,14 @@ void loop() {
   if(waitingKeyRelease) {delay(5);return;}
   if(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed())
     handleKeys(M5Cardputer.Keyboard.keysState());
+  if(screen==Screen::WifiConnecting) {
+    wl_status_t state=WiFi.status();
+    if(state==WL_CONNECTED) showWifiConnectionResult(true);
+    else if((uint32_t)(millis()-wifiConnectStarted)>=WIFI_CONNECT_TIMEOUT_MS) {
+      WiFi.disconnect(false,false);
+      showWifiConnectionResult(false);
+    }
+  }
   // Poll only on the launcher; never touch filesystem while host owns the SD.
   if (!usbActive && screen==Screen::Home && (int32_t)(millis()-sdCheckAt)>=0) {
     bool was=sdReady;
