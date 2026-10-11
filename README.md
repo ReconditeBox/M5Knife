@@ -4,7 +4,7 @@ First **development build**, independent of the Cardputer CP/M project.
 
 ## What is implemented
 
-- Six-icon horizontal scrolling launcher: **Files**, **USB**, **WiFi**, **Bluetooth**, **Status**, and **About**. Three icons are visible at a time; Status and About are inactive placeholders. WiFi scans access points; Bluetooth scans nearby BLE advertisements.
+- Six-icon horizontal scrolling launcher: **Files**, **USB**, **WiFi**, **Bluetooth**, **Status**, and **About**. Three icons are visible at a time; About is an inactive placeholder. WiFi scans access points; Bluetooth scans nearby BLE advertisements; Status shows WiFi connection details and hardware addresses.
 - Universal **G0** button returns to the launcher.
 - Automatic SD card mount at boot using the Cardputer Adv's SPI SD connection.
 - Browse SD directories, open a basic text preview, create folders, rename entries, delete files or **empty** directories with confirmation.
@@ -15,7 +15,7 @@ First **development build**, independent of the Cardputer CP/M project.
 
 ## Keyboard
 
-- Main launcher: `A` / `D` (or Fn + left/right arrows) moves horizontally across all six icons; Enter opens Files or USB. Status and About do nothing yet. WiFi and Bluetooth open scan results.
+- Main launcher: `A` / `D` (or Fn + left/right arrows) moves horizontally across all six icons; Enter opens Files or USB. About does nothing yet; Status shows network details. WiFi and Bluetooth open scan results.
 - Files: `W` / `S` (or Fn + up/down) scrolls; Enter opens; `B` goes up; `N` creates folder; `E` renames; `X` deletes (confirmation); `M` opens disk operations; `R` retries SD mount / refreshes.
 - File preview: `B` backs out (preview currently shows beginning of file only).
 - G0: returns to the main launcher from **any** screen; while USB MSC is active, first eject the drive in Windows or physically disconnect USB to reduce corruption risk.
@@ -73,3 +73,7 @@ The launcher redraw optimisation has been reverted pending USB regression testin
 - **Bluetooth** scans **Bluetooth Low Energy (BLE)** advertisements for four seconds and lists names or addresses with signal strength. ESP32-S3 does not support Bluetooth Classic discovery.
 - Press `W`/`S` to scroll, `R` to rescan, `B` or G0 to return home. Scans are currently synchronous; G0 cannot interrupt the few seconds while a scan is underway.
 - Neither scanner pairs, connects or writes files. USB MSC implementation is unchanged on this branch.
+
+## Status screen
+
+Shows the WiFi SSID and IPv4 address only when connected (otherwise `Not connected`), plus the WiFi station MAC address and Bluetooth controller MAC address. `R` refreshes the values, `B` or G0 returns to the launcher. Viewing Status does not connect to WiFi or pair with Bluetooth.
