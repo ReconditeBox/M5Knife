@@ -124,3 +124,22 @@ MUTE=0xE2
 ```
 
 Codes here use **NEC 16-bit address and 8-bit command**, not a raw 32-bit waveform code; convert codes accordingly. Unsupported or absent button entries are marked '(unset)'. The IR receiver/learning feature is intentionally not implemented (external receive hardware needed). Transmit only to equipment you own or have permission to control. No SD access occurs while USB MSC is active. This branch has not yet been compiled or hardware-tested.
+
+### Samsung TV infrared test
+
+`PROTOCOL=SAMSUNG` in `/IR.CFG` transmits Samsung32, using conventional MSB-first 32-bit code notation. The 16-bit ADDRESS is the first four hex digits of the full code, and each button's 8-bit command is the following two digits; the final two digits are the inverse of the command. For example `E0E040BF` means address `0xE0E0`, command `0x40`.
+
+```ini
+[REMOTE]
+NAME=Samsung TV
+PROTOCOL=SAMSUNG
+ADDRESS=0xE0E0
+POWER=0x40
+VOLUP=0xE0
+VOLDOWN=0xD0
+CHUP=0x48
+CHDOWN=0x08
+MUTE=0xF0
+```
+
+The transmitter uses IRremote's MSB-first Samsung routine for this input convention. Load the profile from the Infrared menu, enter Remote control, and try MUTE or VOLUP first. Codes are a common Samsung set and may not work for every television model. The manual transmitter remains NEC-only in this initial release; Samsung support applies to SD remote profiles. Hardware verification is pending.
