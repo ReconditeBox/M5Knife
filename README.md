@@ -147,3 +147,11 @@ The transmitter uses IRremote's MSB-first Samsung routine for this input convent
 ## Network tools (experimental)
 
 The launcher now has **Network** immediately after WiFi. WiFi remains responsible for connecting/disconnecting and managing `WIFI.CFG`; Network provides **Network information** (IPv4 address, gateway, netmask, DNS, WiFi MAC, SSID, signal strength), **DNS lookup** (hostname to IPv4) and **Ping host** (three ICMP echo requests, timing or timeout). Use W/S and Enter to choose, type the hostname/IP address in the input screen, Enter to run, Fn+backtick to cancel and G0 for Home. Network tools require WiFi connectivity. Ping uses a raw ICMP socket and may be blocked by a destination or network firewall. This branch is not yet compiled or hardware-tested; the tested `main` version remains unchanged.
+
+### Network tools — stage two (experimental)
+
+- **TCP port scan**: enter a hostname or IPv4 address. Checks only common TCP ports (21,22,23,25,53,80,110,139,443,445,3389,8080) with 180 ms per-port connection timeouts. Reports ports that accept connections; this does not test UDP.
+- **LAN scanner**: on a /24 subnet only, checks the first 32 host addresses for reachable TCP port 80 or 443 (75 ms timeout per port). This is **not** a full subnet or comprehensive device discovery scan; devices without those open ports are omitted.
+- **TCP client**: enter `host:port`, press Enter, enter one optional text line and press Enter again. It sends the line with CRLF, reads up to 350 response bytes for about 1.6 seconds, then closes. It does not speak TLS/HTTPS and is not a full interactive terminal.
+  
+Use only on networks and devices you are authorised to inspect. Results are shown on the small built-in screen and may be truncated. Network connections can take a few seconds, during which the UI may temporarily be unresponsive. Existing Ping/DNS/Network Info remain unchanged. This code is not yet compiled or hardware-tested and must not be merged into `main` until verified.
