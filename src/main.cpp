@@ -39,36 +39,6 @@ static bool bleInitialized = false;
 static String wifiTarget, wifiPassword;
 static uint32_t wifiConnectStarted = 0;
 static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 18000;
-static void drawWifiPassword() {
-  header("WIFI PASSWORD");
-  line(23, "Network:", false, ACCENT);
-  line(38, wifiTarget.substring(0,34));
-  line(57, "Password:", false, ACCENT);
-  String masked;
-  for (size_t i=0;i<wifiPassword.length();++i) masked+='*';
-  line(72, masked.substring(masked.length()>34?masked.length()-34:0));
-  footer("Enter connect  Fn+` cancel");
-}
-static void drawWifiConnecting() {
-  header("WIFI CONNECT");
-  line(32, wifiTarget.substring(0,34), false, ACCENT);
-  line(56, "Connecting...");
-  footer("G0 cancel and return home");
-}
-static void beginWifiConnection() {
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(wifiTarget.c_str(),wifiPassword.c_str());
-  wifiPassword = ""; // No credential stored by the toolkit.
-  wifiConnectStarted=millis();
-  screen=Screen::WifiConnecting;
-  drawWifiConnecting();
-}
-static void showWifiConnectionResult(bool connected) {
-  screen=Screen::Wifi;
-  scanStatus=connected ? String("Connected: ")+WiFi.localIP().toString() : "Connection failed / timed out";
-  draw();
-}
-
 static void draw();
 static void scanWifi() {
   scanEntries.clear(); scanSelection=scanScroll=0;
@@ -339,6 +309,36 @@ static void drawFiles() {
   }
   footer("Fn+;,./ arrows  B back  M disk");
 }
+static void drawWifiPassword() {
+  header("WIFI PASSWORD");
+  line(23, "Network:", false, ACCENT);
+  line(38, wifiTarget.substring(0,34));
+  line(57, "Password:", false, ACCENT);
+  String masked;
+  for (size_t i=0;i<wifiPassword.length();++i) masked+='*';
+  line(72, masked.substring(masked.length()>34?masked.length()-34:0));
+  footer("Enter connect  Fn+` cancel");
+}
+static void drawWifiConnecting() {
+  header("WIFI CONNECT");
+  line(32, wifiTarget.substring(0,34), false, ACCENT);
+  line(56, "Connecting...");
+  footer("G0 cancel and return home");
+}
+static void beginWifiConnection() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifiTarget.c_str(),wifiPassword.c_str());
+  wifiPassword = ""; // No credential stored by the toolkit.
+  wifiConnectStarted=millis();
+  screen=Screen::WifiConnecting;
+  drawWifiConnecting();
+}
+static void showWifiConnectionResult(bool connected) {
+  screen=Screen::Wifi;
+  scanStatus=connected ? String("Connected: ")+WiFi.localIP().toString() : "Connection failed / timed out";
+  draw();
+}
+
 static void drawScan(bool wifi) {
   header(wifi ? "WIFI SCAN" : "BLUETOOTH BLE");
   if (wifi && WiFi.status()==WL_CONNECTED)
@@ -494,7 +494,7 @@ static void draw() {
     case Screen::WifiConnecting: drawWifiConnecting(); break;
   }
 }
-static void goHome() { wifiPassword=""; screen=Screen::Home; action=Action::None; draw(); }
+static void goHome() { if(screen==Screen::WifiConnecting) WiFi.disconnect(false,false); wifiPassword=""; screen=Screen::Home; action=Action::None; draw(); }
 static void openFiles() { if (!sdReady) mountSd(); cwd="/"; scanDir(); screen=Screen::Files; draw(); }
 static void showMessage(const String& s, Screen back=Screen::Files) {
   message=s; returnScreen=back; screen=Screen::Message; draw();
