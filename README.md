@@ -92,7 +92,7 @@ In WiFi, scan networks and highlight an SSID using W/S. Enter selects it; an enc
 
 ## WiFi credentials on SD (experimental)
 
-The SD card root `/WIFI.CFG` holds up to 16 network credentials as unencrypted plaintext, using numbered pairs and blank lines between networks:
+The `[WIFI]` section of `/M5KNIFE.CFG` holds up to 16 network credentials as unencrypted plaintext, using numbered pairs and blank lines between networks:
 
 ```ini
 SSID1=MyNetwork
@@ -106,9 +106,9 @@ From the WiFi scan screen, highlight a network and press **L** to load that netw
 
 ## Infrared transmitter (experimental)
 
-The **Infrared** launcher opens a NEC IR toolkit using Cardputer Adv's built-in IR emitter on **GPIO 44**. Select **Manual transmit** to enter hexadecimal address and command (A/C) and press Enter to send. **Remote control** provides POWER, VOLUP, VOLDOWN, CHUP, CHDOWN, MUTE commands driven by the file `/IR.CFG` on the microSD card. **Load SD profile** reads the file before using the remote; only NEC is supported so far.
+The **Infrared** launcher opens a NEC IR toolkit using Cardputer Adv's built-in IR emitter on **GPIO 44**. Select **Manual transmit** to enter hexadecimal address and command (A/C) and press Enter to send. **Remote control** provides POWER, VOLUP, VOLDOWN, CHUP, CHDOWN, MUTE commands driven by the `[REMOTE]` section of `/M5KNIFE.CFG` on the microSD card. **Load SD profile** reads the file before using the remote; only NEC is supported so far.
 
-Example `/IR.CFG` (example values only, *not* guaranteed to work with any equipment):
+Example `[REMOTE]` section in `/M5KNIFE.CFG` (example values only, *not* guaranteed to work with any equipment):
 
 ```ini
 [REMOTE]
@@ -127,7 +127,7 @@ Codes here use **NEC 16-bit address and 8-bit command**, not a raw 32-bit wavefo
 
 ### Samsung TV infrared test
 
-`PROTOCOL=SAMSUNG` in `/IR.CFG` transmits Samsung32, using conventional MSB-first 32-bit code notation. The 16-bit ADDRESS is the first four hex digits of the full code, and each button's 8-bit command is the following two digits; the final two digits are the inverse of the command. For example `E0E040BF` means address `0xE0E0`, command `0x40`.
+`PROTOCOL=SAMSUNG` in the `[REMOTE]` section of `/M5KNIFE.CFG` transmits Samsung32, using conventional MSB-first 32-bit code notation. The 16-bit ADDRESS is the first four hex digits of the full code, and each button's 8-bit command is the following two digits; the final two digits are the inverse of the command. For example `E0E040BF` means address `0xE0E0`, command `0x40`.
 
 ```ini
 [REMOTE]
@@ -146,7 +146,7 @@ The transmitter uses IRremote's MSB-first Samsung routine for this input convent
 
 ## Network tools (experimental)
 
-The launcher now has **Network** immediately after WiFi. WiFi remains responsible for connecting/disconnecting and managing `WIFI.CFG`; Network provides **Network information** (IPv4 address, gateway, netmask, DNS, WiFi MAC, SSID, signal strength), **DNS lookup** (hostname to IPv4) and **Ping host** (three ICMP echo requests, timing or timeout). Use W/S and Enter to choose, type the hostname/IP address in the input screen, Enter to run, Fn+backtick to cancel and G0 for Home. Network tools require WiFi connectivity. Ping uses a raw ICMP socket and may be blocked by a destination or network firewall. This branch is not yet compiled or hardware-tested; the tested `main` version remains unchanged.
+The launcher now has **Network** immediately after WiFi. WiFi remains responsible for connecting/disconnecting and managing `M5KNIFE.CFG`; Network provides **Network information** (IPv4 address, gateway, netmask, DNS, WiFi MAC, SSID, signal strength), **DNS lookup** (hostname to IPv4) and **Ping host** (three ICMP echo requests, timing or timeout). Use W/S and Enter to choose, type the hostname/IP address in the input screen, Enter to run, Fn+backtick to cancel and G0 for Home. Network tools require WiFi connectivity. Ping uses a raw ICMP socket and may be blocked by a destination or network firewall. This branch is not yet compiled or hardware-tested; the tested `main` version remains unchanged.
 
 ### Network tools — stage two (experimental)
 
@@ -162,7 +162,7 @@ The Status screen shows WiFi SSID and IPv4, WiFi/Bluetooth MAC addresses, SD tot
 
 ## High-priority tools (experimental branch)
 
-- **WiFi auto-connect:** At startup, if `AUTO_WIFI=1`, M5Knife attempts to connect to the first saved network in `/WIFI.CFG` without interrupting the launcher. Disable under Settings if unwanted. The saved WiFi profiles are still maintained in the existing WiFi menu.
+- **WiFi auto-connect:** At startup, if `AUTO_WIFI=1`, M5Knife attempts to connect to the first saved network in `/M5KNIFE.CFG` [WIFI] section without interrupting the launcher. Disable under Settings if unwanted. The saved WiFi profiles are still maintained in the existing WiFi menu.
 - **NTP clock:** Once WiFi connects, synchronises using pool.ntp.org/time.google.com if enabled. The synchronised local date/time appears near the bottom of the scrollable Status page. Settings provides a whole-hour UTC offset; daylight-saving changes are not automatic.
 - **Settings:** A ninth launcher tile opens settings for WiFi auto-connect, NTP sync, UTC offset, display brightness and display sleep timeout. W/S selects a row; A/D changes values. Choose **Save settings** to write `/M5KNIFE.CFG` on the SD card. Sleep turns display brightness off after inactivity; the keyboard or G0 wakes it. SD is required for persistence.
 - **Text viewer:** Files now opens a RAM-backed 8 KiB maximum text viewer. W/S scroll, F searches text, E enters editor, Fn+Escape returns to Files.
@@ -194,7 +194,7 @@ In the HTTP file manager, clicking a recognised file opens it in a browser tab w
 
 ### Unified SD configuration (v0.4.9 development)
 
-The firmware now uses one SD-card file, `/M5KNIFE.CFG`, split into `[SETTINGS]`, `[WIFI]`, `[REMOTE]`, and `[HTTPD]` sections. On startup it migrates the previous `M5KNIFE.CFG`, `WIFI.CFG`, and `IR.CFG` automatically. The original legacy Wi-Fi and infrared files remain on the SD card as backups and are no longer used after migration. Section updates preserve the other sections; an intermediate temporary file and backup are used when updating the configuration.
+The firmware uses one SD-card file, `/M5KNIFE.CFG`, split into `[SETTINGS]`, `[WIFI]`, `[REMOTE]`, and `[HTTPD]` sections. It no longer reads or migrates separate configuration files. Section updates preserve the other sections; an intermediate temporary file and backup are used when updating the configuration.
 
 Example (replace with your own values; IR button names match the existing profile):
 ```ini
@@ -225,4 +225,4 @@ USERNAME=m5knife
 PASSWORD=1234
 ```
 
-**SLEEP_MIN=0 means never sleep**, and is the default. Set `USERNAME` and `PASSWORD` in the `[HTTPD]` section to change HTTP Basic login; if omitted, defaults remain `m5knife` / `1234`. The password is stored in plaintext on the SD card and transmitted over unencrypted HTTP; use only on a trusted network. Stop HTTPD before editing its configuration, and restart the Cardputer to load changes. This version needs compilation and on-device migration testing before merge.
+**SLEEP_MIN=0 means never sleep**, and is the default. Set `USERNAME` and `PASSWORD` in the `[HTTPD]` section to change HTTP Basic login; if omitted, defaults remain `m5knife` / `1234`. The password is stored in plaintext on the SD card and transmitted over unencrypted HTTP; use only on a trusted network. Stop HTTPD before editing its configuration, and restart the Cardputer to load changes. This revision needs compilation and on-device testing before merge.
