@@ -68,42 +68,6 @@ static void irSend(uint16_t address,uint8_t command) {
   IrSender.sendNEC(address,command,0);
   irNotice="Sent NEC 0x"+String(address,HEX)+"/0x"+String(command,HEX);
 }
-static bool irLoadProfile() {
-  if(usbActive || (!sdReady && !mountSd())) {irNotice="SD not available";return false;}
-  File f=SD.open("/IR.CFG",FILE_READ);
-  if(!f) {irNotice="No /IR.CFG on SD";return false;}
-  String name="";uint32_t address=0;bool addressOk=false;
-  uint8_t commands[6]={};bool found[6]={};
-  bool inRemote=false,nec=false;
-  while(f.available()) {
-    String entry=f.readStringUntil('\n'); entry.trim();
-    if(entry=="[REMOTE]") {inRemote=true;continue;}
-    if(!inRemote || entry.isEmpty() || entry.startsWith("#") || entry.startsWith(";")) continue;
-    int equals=entry.indexOf('='); if(equals<0)continue;
-    String key=entry.substring(0,equals),value=entry.substring(equals+1);
-    key.trim();value.trim();
-    if(key=="NAME")name=value;
-    else if(key=="PROTOCOL")nec=value.equalsIgnoreCase("NEC");
-    else if(key=="ADDRESS")addressOk=parseHexValue(value,address,65535);
-    else for(int i=0;i<6;i++)if(key==irButtonNames[i]){
-      uint32_t v=0;
-      if(parseHexValue(value,v,255)){commands[i]=(uint8_t)v;found[i]=true;}
-    }
-  }
-  f.close();
-  if(!nec || !addressOk){irNotice="IR.CFG needs NEC/ADDRESS";return false;}
-  irName=name.length()?name:"IR remote";
-  irProfileAddress=(uint16_t)address;
-  for(int i=0;i<6;i++){irButtonCommands[i]=commands[i];irButtonPresent[i]=found[i];}
-  irProfileLoaded=true; irNotice="Loaded /IR.CFG";
-  return true;
-}
-
-static String wifiTarget, wifiPassword;
-static uint32_t wifiConnectStarted = 0;
-static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 18000;
-static void draw();
-static void beginWifiConnection(); // Used by SD WiFi config loader.
 
 static void scanWifi() {
   scanEntries.clear(); scanSelection=scanScroll=0;
@@ -405,6 +369,43 @@ static void loadWifiConfig() {
   }
   scanStatus="Selected WiFi not in WIFI.CFG";draw();
 }
+
+static bool irLoadProfile() {
+  if(usbActive || (!sdReady && !mountSd())) {irNotice="SD not available";return false;}
+  File f=SD.open("/IR.CFG",FILE_READ);
+  if(!f) {irNotice="No /IR.CFG on SD";return false;}
+  String name="";uint32_t address=0;bool addressOk=false;
+  uint8_t commands[6]={};bool found[6]={};
+  bool inRemote=false,nec=false;
+  while(f.available()) {
+    String entry=f.readStringUntil('\n'); entry.trim();
+    if(entry=="[REMOTE]") {inRemote=true;continue;}
+    if(!inRemote || entry.isEmpty() || entry.startsWith("#") || entry.startsWith(";")) continue;
+    int equals=entry.indexOf('='); if(equals<0)continue;
+    String key=entry.substring(0,equals),value=entry.substring(equals+1);
+    key.trim();value.trim();
+    if(key=="NAME")name=value;
+    else if(key=="PROTOCOL")nec=value.equalsIgnoreCase("NEC");
+    else if(key=="ADDRESS")addressOk=parseHexValue(value,address,65535);
+    else for(int i=0;i<6;i++)if(key==irButtonNames[i]){
+      uint32_t v=0;
+      if(parseHexValue(value,v,255)){commands[i]=(uint8_t)v;found[i]=true;}
+    }
+  }
+  f.close();
+  if(!nec || !addressOk){irNotice="IR.CFG needs NEC/ADDRESS";return false;}
+  irName=name.length()?name:"IR remote";
+  irProfileAddress=(uint16_t)address;
+  for(int i=0;i<6;i++){irButtonCommands[i]=commands[i];irButtonPresent[i]=found[i];}
+  irProfileLoaded=true; irNotice="Loaded /IR.CFG";
+  return true;
+}
+
+static String wifiTarget, wifiPassword;
+static uint32_t wifiConnectStarted = 0;
+static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 18000;
+static void draw();
+static void beginWifiConnection(); // Used by SD WiFi config loader.
 
 static void scanDir() {
   entries.clear(); selected=scrollPos=0;
