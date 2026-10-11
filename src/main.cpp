@@ -4,6 +4,9 @@
 #include <SD.h>
 #include <USB.h>
 #include <USBMSC.h>
+#include <WiFi.h>
+#include <BLEDevice.h>
+#include <BLEScan.h>
 #include <cstring>
 #include <vector>
 #include <algorithm>
@@ -14,7 +17,7 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Bluetooth };
 enum class Action { None, Mkdir, Rename, Delete };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -26,6 +29,53 @@ static bool sdReady = false;
 static size_t selected = 0, scrollPos = 0;
 static int homeIndex = 0, diskIndex = 0;
 static bool waitingKeyRelease = false;
+struct ScanEntry { String label; int rssi; bool secured; };
+static std::vector<ScanEntry> scanEntries;
+static size_t scanSelection = 0, scanScroll = 0;
+static String scanStatus;
+static bool bleInitialized = false;
+static void draw();
+static void scanWifi() {
+  scanEntries.clear(); scanSelection=scanScroll=0;
+  screen=Screen::Wifi;
+  scanStatus="Scanning WiFi...";
+  draw();
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(false, false);
+  int count=WiFi.scanNetworks(false,true);
+  if (count<0) scanStatus="WiFi scan failed";
+  else {
+    for (int i=0;i<count && i<64;++i) {
+      String name=WiFi.SSID(i);
+      if (!name.length()) name="<hidden>";
+      scanEntries.push_back({name, WiFi.RSSI(i), WiFi.encryptionType(i)!=WIFI_AUTH_OPEN});
+    }
+    scanStatus=String(count)+" network(s)";
+  }
+  WiFi.scanDelete();
+  draw();
+}
+static void scanBluetooth() {
+  scanEntries.clear(); scanSelection=scanScroll=0;
+  screen=Screen::Bluetooth;
+  scanStatus="Scanning BLE...";
+  draw();
+  if (!bleInitialized) { BLEDevice::init(""); bleInitialized=true; }
+  BLEScan* scanner=BLEDevice::getScan();
+  scanner->setActiveScan(true);
+  BLEScanResults results=scanner->start(4,false);
+  const int total=results.getCount();
+  for(int i=0;i<total && i<64;++i) {
+    BLEAdvertisedDevice d=results.getDevice(i);
+    String name=d.haveName()?String(d.getName().c_str()):String(d.getAddress().toString().c_str());
+    if (!name.length()) name="Unknown BLE";
+    scanEntries.push_back({name,d.getRSSI(),false});
+  }
+  scanStatus=String(total)+" BLE device(s)";
+  scanner->clearResults();
+  draw();
+}
+
 static USBMSC msc;
 static bool usbActive = false;
 static bool usbConfigured = false;
@@ -223,6 +273,21 @@ static void drawFiles() {
   }
   footer("Fn+;,./ arrows  B back  M disk");
 }
+static void drawScan(bool wifi) {
+  header(wifi ? "WIFI SCAN" : "BLUETOOTH BLE");
+  line(21,scanStatus,false,ACCENT);
+  if(scanEntries.empty()) line(55,"No devices found",false,MUTED);
+  for (int row=0;row<6;++row) {
+    size_t n=scanScroll+row;
+    if(n>=scanEntries.size()) break;
+    const auto& e=scanEntries[n];
+    String label=String(e.secured?"* ":"  ")+e.label;
+    if (label.length()>23) label=label.substring(0,20)+"...";
+    label+=" "+String(e.rssi)+"dBm";
+    line(36+row*13,label,n==scanSelection);
+  }
+  footer("W/S scroll  R rescan  B back  G0");
+}
 static void drawDisk() {
   header("FILES / DISK");
   line(29, "SD card operations", false, ACCENT);
@@ -310,6 +375,8 @@ static void draw() {
     case Screen::Input: drawInput(); break;
     case Screen::Confirm: drawConfirm(); break;
     case Screen::Message: drawMessage(); break;
+    case Screen::Wifi: drawScan(true); break;
+    case Screen::Bluetooth: drawScan(false); break;
   }
 }
 static void goHome() { screen=Screen::Home; action=Action::None; draw(); }
@@ -363,9 +430,18 @@ static void handleKeys(const Keys& k) {
     if(k.enter) {
       if(homeIndex==0) openFiles();
       else if(homeIndex==1) startUsb();
-      // WiFi, Bluetooth, Status and About are inactive placeholders.
+      else if(homeIndex==2) scanWifi();
+      else if(homeIndex==3) scanBluetooth();
+      // Status and About remain inactive placeholders.
       return;
     }
+  } else if(screen==Screen::Wifi || screen==Screen::Bluetooth) {
+    if (escape||backspace||typed(k,'b')) {goHome();return;}
+    if (typed(k,'r')) {if(screen==Screen::Wifi) scanWifi(); else scanBluetooth();return;}
+    if (up && scanSelection>0) --scanSelection;
+    if (down && scanSelection+1<scanEntries.size()) ++scanSelection;
+    if (scanSelection<scanScroll) scanScroll=scanSelection;
+    if (scanSelection>=scanScroll+6) scanScroll=scanSelection-5;
   } else if(screen==Screen::Files) {
     if (up && selected>0) --selected;
     if (down && selected+1<entries.size()) ++selected;
