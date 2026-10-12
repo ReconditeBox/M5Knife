@@ -59,7 +59,9 @@ static bool bleInitialized = false;
 static int netMenuIndex=0;
 static WebServer httpFiles(80);
 static bool httpRunning=false,httpUploadFailed=false,httpRoutesRegistered=false;
-static bool httpQrVisible=false;
+static bool httpHotspotActive=false;
+static uint8_t httpQrMode=0; // 0 status, 1 WiFi join QR, 2 HTTP URL QR
+static String hotspotSsid="M5Knife", hotspotPassword="M5Knife1234";
 static String httpPassword="1234",httpUploadPath;
 static File httpUploadFile;
 static uint32_t httpRequests=0;
@@ -538,6 +540,21 @@ static void readSettings(){
     String key=row.substring(0,equal),value=row.substring(equal+1);
     if(key=="USERNAME"&&value.length()&&value.length()<=64)httpUsername=value;
     if(key=="PASSWORD"&&value.length()&&value.length()<=64)httpPassword=value;
+  }
+  // Optional [HOTSPOT] config in the same NVS-backed M5KNIFE.CFG.
+  // Invalid values leave the safe built-in defaults unchanged.
+  block=configSection(data,"HOTSPOT");offset=0;
+  while(offset<(int)block.length()){
+    int end=block.indexOf('\n',offset);
+    String row=end<0?block.substring(offset):block.substring(offset,end);
+    offset=end<0?block.length():end+1;
+    if(row.endsWith("\r"))row.remove(row.length()-1);
+    int equal=row.indexOf('=');if(equal<0)continue;
+    String key=row.substring(0,equal),value=row.substring(equal+1);
+    if(key=="SSID"&&value.length()>=1&&value.length()<=32 &&
+       value.indexOf('\r')<0 && value.indexOf('\n')<0)hotspotSsid=value;
+    else if(key=="PASSWORD"&&value.length()>=8&&value.length()<=63 &&
+       value.indexOf('\r')<0 && value.indexOf('\n')<0)hotspotPassword=value;
   }
 }
 static bool saveSettings(){
