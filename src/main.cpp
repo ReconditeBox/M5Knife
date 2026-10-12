@@ -268,7 +268,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.14", 5, 5);
+  d.drawString("M5KNIFE 0.5.15", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -936,7 +936,8 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.14",
+    "Version 0.5.15",
+    "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
     "",
