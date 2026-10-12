@@ -104,30 +104,17 @@ PASS2=another-password
 
 From the WiFi scan screen, highlight a network and press **L** to load that network's saved credentials and connect. Press **P** after successfully connecting with an entered password to add the network or update its existing password. Other stored networks are retained; the file is rewritten with consecutive numbers. **D** disconnects; **R** rescans. SSID/password values retain spaces, punctuation and equals signs. An SD card containing credentials must be kept secure: all passwords are readable by anyone who obtains the card or accesses it through USB MSC. Never use SD filesystem operations while USB MSC owns the card. This branch requires compilation and hardware testing.
 
-## Infrared transmitter (experimental)
+## Infrared transmitter and remote library (0.5.14 development)
 
-The **Infrared** launcher opens a NEC IR toolkit using Cardputer Adv's built-in IR emitter on **GPIO 44**. Select **Manual transmit** to enter hexadecimal address and command (A/C) and press Enter to send. **Remote control** provides POWER, VOLUP, VOLDOWN, CHUP, CHDOWN, MUTE commands driven by the `[REMOTE]` section of `/M5KNIFE.CFG` on the microSD card. **Load SD profile** reads the file before using the remote; only NEC is supported so far.
+The Cardputer Adv built-in IR emitter (GPIO 44) transmits **NEC** and **Samsung** remote control codes. **Infrared → Manual transmit** accepts a NEC address (A) and command (C), in hexadecimal, then Enter transmits. **Infrared → Remote control** provides six buttons: POWER, VOLUP, VOLDOWN, CHUP, CHDOWN and MUTE. Unset buttons cannot be transmitted.
 
-Example `[REMOTE]` section in `/M5KNIFE.CFG` (example values only, *not* guaranteed to work with any equipment):
+### Remote library
 
-```ini
-[REMOTE]
-NAME=My TV
-PROTOCOL=NEC
-ADDRESS=0x00FF
-POWER=0x02
-VOLUP=0x62
-VOLDOWN=0xA8
-CHUP=0x22
-CHDOWN=0xC2
-MUTE=0xE2
-```
+The **Infrared → Remote library** screen lists up to **eight saved remotes**, displaying the selected remote with an asterisk. Use W/S to choose, Enter to activate a profile, and B to return. Press **L** while using Remote control to open the library. The chosen profile is stored in ESP32-S3 **NVS** and automatically restored on future boots **with or without an SD card**. The first valid profile becomes active if the saved slot is not present.
 
-Codes here use **NEC 16-bit address and 8-bit command**, not a raw 32-bit waveform code; convert codes accordingly. Unsupported or absent button entries are marked '(unset)'. The IR receiver/learning feature is intentionally not implemented (external receive hardware needed). Transmit only to equipment you own or have permission to control. No SD access occurs while USB MSC is active. This branch has not yet been compiled or hardware-tested.
+All profiles are maintained in the same NVS-backed unified configuration used by other M5Knife settings. To add or edit profiles, choose **Settings → Export config to SD**, edit `/M5KNIFE.CFG` on your computer or through the HTTP file manager, then choose **Settings → Import config from SD**. Existing profile data in the original `[REMOTE]` section remains supported and is treated as slot 1. Additional profiles use `[REMOTE2]` through `[REMOTE8]`; `[REMOTE1]` is also recognised as a slot-1 alternative. The optional `[IR_LIBRARY]` section records which numbered slot should be active. Selecting a remote in the library updates `[IR_LIBRARY]` in NVS automatically, without requiring an SD card.
 
-### Samsung TV infrared test
-
-`PROTOCOL=SAMSUNG` in the `[REMOTE]` section of `/M5KNIFE.CFG` transmits Samsung32, using conventional MSB-first 32-bit code notation. The 16-bit ADDRESS is the first four hex digits of the full code, and each button's 8-bit command is the following two digits; the final two digits are the inverse of the command. For example `E0E040BF` means address `0xE0E0`, command `0x40`.
+Example configuration sections (illustrative commands only; check codes for your devices):
 
 ```ini
 [REMOTE]
@@ -140,9 +127,27 @@ VOLDOWN=0xD0
 CHUP=0x48
 CHDOWN=0x08
 MUTE=0xF0
+
+[REMOTE2]
+NAME=Bedroom TV
+PROTOCOL=NEC
+ADDRESS=0x00FF
+POWER=0x02
+VOLUP=0x62
+VOLDOWN=0xA8
+CHUP=0x22
+CHDOWN=0xC2
+MUTE=0xE2
+
+[IR_LIBRARY]
+SLOT=2
 ```
 
-The transmitter uses IRremote's MSB-first Samsung routine for this input convention. Load the profile from the Infrared menu, enter Remote control, and try MUTE or VOLUP first. Codes are a common Samsung set and may not work for every television model. The manual transmitter remains NEC-only in this initial release; Samsung support applies to SD remote profiles. Hardware verification is pending.
+The values use a **16-bit address** and **8-bit commands**. Samsung32 uses conventional MSB-first notation: for example, full 32-bit code `E0E040BF` corresponds to `ADDRESS=0xE0E0` and `POWER=0x40` (the low byte is the complement of the command). NEC uses the IRremote NEC address/command API. Profile names are limited to 32 display characters. Missing/invalid protocol or address prevents that profile from appearing in the library; missing individual button commands are shown as **(unset)**.
+
+**Not included:** IR receiving/learning, creating or editing profiles using only the Cardputer keyboard, and support for protocols other than NEC and Samsung. IR receiving would require suitable external hardware. Use the IR transmitter only with equipment you are authorised to control.
+
+This feature is on the `feature/ir-remote-library` branch and needs compilation and physical Cardputer testing before merging to `main`. The stable baseline remains **0.5.13**.
 
 ## Network tools (experimental)
 
