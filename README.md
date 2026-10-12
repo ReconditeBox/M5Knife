@@ -241,4 +241,4 @@ While the HTTP File Server is running under **Network → HTTP File Server**, pr
 
 The QR code uses the QR renderer already in M5GFX, with a white border for scanning on the Cardputer's small screen. HTTP Basic authentication still applies; the QR code holds only the server URL, not the username or password. Keep the server on a trusted network. No additional library dependency is needed.
 
-This change is on `feature/http-qr-code`, uncompiled and awaiting Cardputer/phone testing; stable `main` remains at M5Knife 0.5.11.
+The HTTP QR-code view has been accepted as working on the Cardputer for M5Knife 0.5.12.
