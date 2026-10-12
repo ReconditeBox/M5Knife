@@ -70,7 +70,7 @@ static int netTool=0;
 static size_t netResultScroll=0;
 static String netTarget, netOutput;
 static String netDefaultTarget="8.8.8.8";
-static void startHttpFiles();
+static void startHttpFiles(bool forceHotspot=false);
 static void drawNetworkMenu();
 static void drawNetworkInfo();
 static void drawNetworkInput();
@@ -924,9 +924,8 @@ static void drawIrRemote() {
 }
 static void drawNetworkMenu() {
   header("NETWORK");
-  const char* options[]={"Network info","DNS lookup","Ping","TCP port scan","LAN scanner","HTTP File Server"};
-  for(int i=0;i<6;++i)line(22+i*16,options[i],i==netMenuIndex);
-  if(WiFi.status()!=WL_CONNECTED)line(101,"Offline: HTTP starts hotspot",false,WARN);
+  const char* options[]={"Network info","DNS lookup","Ping","TCP port scan","LAN scanner","HTTP File Server","HTTP Hotspot"};
+  for(int i=0;i<7;++i)line(20+i*14,options[i],i==netMenuIndex);
   footer("W/S select Enter  B/G0 back");
 }
 static String httpServerIp(){
@@ -1331,11 +1330,11 @@ static void httpUploadDone(){
   if(httpUploadFailed){httpFiles.send(409,"text/plain","Upload failed or file exists");return;}
   String dir=httpFolderArg();httpRedirect(dir.length()?dir:"/");
 }
-static void startHttpFiles(){
+static void startHttpFiles(bool forceHotspot){
   if(usbActive || (!sdReady && !mountSd())){showMessage("SD unavailable",Screen::Network);return;}
   // Keep the existing router-connected mode. Otherwise create a private Wi-Fi
   // access point for direct phone/computer access to the HTTP file manager.
-  if(WiFi.status()!=WL_CONNECTED){
+  if(forceHotspot || WiFi.status()!=WL_CONNECTED){
     WiFi.disconnect(false,false);
     WiFi.mode(WIFI_AP);
     if(!WiFi.softAP(hotspotSsid.c_str(),hotspotPassword.c_str())){
@@ -1816,10 +1815,10 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::Network) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && netMenuIndex>0)--netMenuIndex;
-    if(down && netMenuIndex<5)++netMenuIndex;
+    if(down && netMenuIndex<6)++netMenuIndex;
     if(k.enter){
       if(netMenuIndex==0){screen=Screen::NetInfo;draw();return;}
-      if(netMenuIndex==5){startHttpFiles();return;}
+      if(netMenuIndex==5||netMenuIndex==6){startHttpFiles(netMenuIndex==6);return;}
       if(WiFi.status()!=WL_CONNECTED){
         showMessage("Connect to WiFi first",Screen::Network);return;
       }
