@@ -626,7 +626,7 @@ static void settingsActivate(int delta){
   else if(settingsIndex==5){showMessage(saveSettings()?"Settings saved in NVS":"NVS save failed",Screen::Settings);return;}
   else if(settingsIndex==6){ntpStarted=false;startNtp();}
   else if(settingsIndex==7){
-    if(configImportSd()){readSettings();applySettings();showMessage("Config imported to NVS",Screen::Settings);}
+    if(configImportSd()){readSettings();irLoadLibrary();applySettings();showMessage("Config imported to NVS",Screen::Settings);}
     else showMessage("Import failed / no SD",Screen::Settings);
     return;
   }
@@ -1960,9 +1960,30 @@ static void handleKeys(const Keys& k) {
     if(k.enter){
       if(irMenuIndex==0){screen=Screen::IrManual;irNotice="";draw();return;}
       if(irMenuIndex==1){screen=Screen::IrRemote;irRemoteSelection=0;draw();return;}
-      if(irMenuIndex==2){irLoadProfile();draw();return;}
-      showMessage("IR TX: GPIO44\\nProtocols: NEC, Samsung\\nProfiles: /M5KNIFE.CFG\\nRX requires extra hardware",Screen::Infrared);return;
+      if(irMenuIndex==2){
+        screen=Screen::IrLibrary;
+        irLibrarySelection=0;
+        for(size_t i=0;i<irProfiles.size();i++)
+          if(irProfiles[i].slot==irActiveSlot)irLibrarySelection=(int)i;
+        irLibraryScroll=std::max(0,irLibrarySelection-5);
+        draw();return;
+      }
+      showMessage("IR TX: GPIO44\\nNEC / Samsung\\nLibrary in NVS\\nImport via Settings",Screen::Infrared);return;
     }
+  } else if(screen==Screen::IrLibrary) {
+    if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
+    if(up&&irLibrarySelection>0)--irLibrarySelection;
+    if(down&&irLibrarySelection+1<(int)irProfiles.size())++irLibrarySelection;
+    if(irLibrarySelection<irLibraryScroll)irLibraryScroll=irLibrarySelection;
+    if(irLibrarySelection>=irLibraryScroll+6)irLibraryScroll=irLibrarySelection-5;
+    if(k.enter){
+      if(irProfiles.empty()){showMessage("No saved remotes",Screen::IrLibrary);return;}
+      if(!irSelectProfile((size_t)irLibrarySelection)){
+        showMessage("Failed saving selection",Screen::IrLibrary);return;
+      }
+      screen=Screen::IrRemote;irRemoteSelection=0;draw();return;
+    }
+    draw();return;
   } else if(screen==Screen::IrManual) {
     if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
     if(typed(k,'a')||typed(k,'c')){
@@ -1985,12 +2006,20 @@ static void handleKeys(const Keys& k) {
     else if(!k.fn)for(char c:k.word)if(irEditText.length()<6 && ((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))irEditText+=c;
   } else if(screen==Screen::IrRemote) {
     if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
+    if(typed(k,'l')){
+      screen=Screen::IrLibrary;
+      irLibrarySelection=0;
+      for(size_t i=0;i<irProfiles.size();i++)
+        if(irProfiles[i].slot==irActiveSlot)irLibrarySelection=(int)i;
+      irLibraryScroll=std::max(0,irLibrarySelection-5);
+      draw();return;
+    }
     if(up && irRemoteSelection>0)--irRemoteSelection;
     if(down && irRemoteSelection<5)++irRemoteSelection;
     if(k.enter){
       if(irProfileLoaded && irButtonPresent[irRemoteSelection])
         irSend(irProfileAddress,irButtonCommands[irRemoteSelection],irProfileSamsung);
-      else irNotice="Load M5KNIFE.CFG / code unset";
+      else irNotice="No remote / code unset";
       draw();return;
     }
   } else if(screen==Screen::WifiPassword) {
@@ -2150,7 +2179,7 @@ void setup() {
       configApply("[SETTINGS]\nAUTO_WIFI=1\nNTP=1\nBRIGHTNESS=128\nSLEEP_MIN=0\nTZ_HOURS=0\n[WIFI]\n[REMOTE]\n[HTTPD]\nUSERNAME=m5knife\nPASSWORD=1234\n");
     }
   }
-  readSettings();applySettings();autoConnectWifi();
+  readSettings();irLoadLibrary();applySettings();autoConnectWifi();
   lastInteraction=millis();
   sdCheckAt=millis()+SD_CHECK_INTERVAL;
   USB.onEvent(usbEvent);
