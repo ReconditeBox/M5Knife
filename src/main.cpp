@@ -1925,9 +1925,15 @@ static void handleKeys(const Keys& k) {
     return;
   } else if(screen==Screen::About) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
+    if(typed(k,'q')||k.enter){screen=Screen::AboutQr;draw();return;}
     if(up && aboutScroll>0)--aboutScroll;
-    if(down && aboutScroll<13)++aboutScroll;
+    if(down && aboutScroll<14)++aboutScroll;
     drawAbout();return;
+  } else if(screen==Screen::AboutQr) {
+    if(escape||backspace||typed(k,'b')||typed(k,'q')||k.enter){
+      screen=Screen::About;draw();return;
+    }
+    return;
   } else if(screen==Screen::Network) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && netMenuIndex>0)--netMenuIndex;
