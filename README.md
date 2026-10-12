@@ -2,7 +2,7 @@
 
 **A standalone utilities toolkit for the M5Stack Cardputer Adv.**
 
-**Firmware on this branch: 0.5.15 (awaiting hardware test)**
+**Current firmware: 0.5.15**
 
 M5Knife combines an SD card file manager, USB card reader, Wi-Fi and network tools, Bluetooth scanning, infrared remotes and system information in a small keyboard-driven launcher. It also runs an HTTP file manager that can be reached over an existing Wi-Fi network or directly from a phone using the Cardputer's own hotspot.
 
