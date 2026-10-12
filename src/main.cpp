@@ -926,7 +926,7 @@ static void drawNetworkMenu() {
   header("NETWORK");
   const char* options[]={"Network info","DNS lookup","Ping","TCP port scan","LAN scanner","HTTP File Server"};
   for(int i=0;i<6;++i)line(22+i*16,options[i],i==netMenuIndex);
-  if(WiFi.status()!=WL_CONNECTED)line(101,"WiFi not connected",false,WARN);
+  if(WiFi.status()!=WL_CONNECTED)line(101,"Offline: HTTP starts hotspot",false,WARN);
   footer("W/S select Enter  B/G0 back");
 }
 static String httpServerIp(){
@@ -1332,8 +1332,20 @@ static void httpUploadDone(){
   String dir=httpFolderArg();httpRedirect(dir.length()?dir:"/");
 }
 static void startHttpFiles(){
-  if(WiFi.status()!=WL_CONNECTED){showMessage("Connect to WiFi first",Screen::Network);return;}
   if(usbActive || (!sdReady && !mountSd())){showMessage("SD unavailable",Screen::Network);return;}
+  // Keep the existing router-connected mode. Otherwise create a private Wi-Fi
+  // access point for direct phone/computer access to the HTTP file manager.
+  if(WiFi.status()!=WL_CONNECTED){
+    WiFi.disconnect(false,false);
+    WiFi.mode(WIFI_AP);
+    if(!WiFi.softAP(hotspotSsid.c_str(),hotspotPassword.c_str())){
+      WiFi.mode(WIFI_STA);
+      autoConnectWifi();
+      showMessage("Hotspot start failed",Screen::Network);
+      return;
+    }
+    httpHotspotActive=true;
+  }else httpHotspotActive=false;
   // Credentials loaded from NVS [HTTPD], otherwise defaults are used.
   if(httpPassword.isEmpty())httpPassword="1234";
   httpRequests=0;httpUploadFailed=false;httpUploadPath="";
@@ -1350,7 +1362,7 @@ static void startHttpFiles(){
   }
   httpFiles.begin();
   httpRunning=true;
-  httpQrVisible=false;
+  httpQrMode=0;
   screen=Screen::HttpFiles;draw();
 }
 
@@ -1771,9 +1783,7 @@ static void handleKeys(const Keys& k) {
         case 1: startUsb(); break;
         case 2: scanWifi(); break;
         case 3:
-          if(WiFi.status()==WL_CONNECTED) {
-            screen=Screen::Network;netMenuIndex=0;draw();
-          } else showMessage("Connect to WiFi first",Screen::Home);
+          screen=Screen::Network;netMenuIndex=0;draw();
           break;
         case 4: scanBluetooth(); break;
         case 5:
@@ -1810,6 +1820,9 @@ static void handleKeys(const Keys& k) {
     if(k.enter){
       if(netMenuIndex==0){screen=Screen::NetInfo;draw();return;}
       if(netMenuIndex==5){startHttpFiles();return;}
+      if(WiFi.status()!=WL_CONNECTED){
+        showMessage("Connect to WiFi first",Screen::Network);return;
+      }
       netTool=netMenuIndex;
       netPingMode=(netTool==2);
       if(netTool==4){
@@ -1825,7 +1838,11 @@ static void handleKeys(const Keys& k) {
     }
   } else if(screen==Screen::HttpFiles){
     if(escape||backspace||typed(k,'b')){stopHttpFiles();screen=Screen::Network;draw();return;}
-    if(typed(k,'q')||k.enter){httpQrVisible=!httpQrVisible;drawHttpFiles();return;}
+    if(typed(k,'q')||k.enter){
+      if(httpHotspotActive)httpQrMode=(httpQrMode+1)%3;
+      else httpQrMode=httpQrMode==0?2:0;
+      drawHttpFiles();return;
+    }
     if(typed(k,'r'))drawHttpFiles();
     return;
   } else if(screen==Screen::NetInfo) {
@@ -2071,7 +2088,11 @@ void loop() {
   M5Cardputer.update();
   startNtp();
   if(httpRunning){
-    if(WiFi.status()!=WL_CONNECTED){stopHttpFiles();showMessage("HTTP server stopped: WiFi lost",Screen::Home);}
+    const wifi_mode_t mode=WiFi.getMode();
+    const bool connectionLost=httpHotspotActive?
+      (mode!=WIFI_AP && mode!=WIFI_AP_STA):
+      WiFi.status()!=WL_CONNECTED;
+    if(connectionLost){stopHttpFiles();showMessage("HTTP server stopped: WiFi lost",Screen::Home);}
     else httpFiles.handleClient();
   }
   if(sleepMinutes>0 && (uint32_t)(millis()-lastInteraction)>(uint32_t)sleepMinutes*60000UL)
@@ -2098,8 +2119,7 @@ void loop() {
       showWifiConnectionResult(false);
     }
   }
-  if((screen==Screen::Network || screen==Screen::NetInfo ||
-      screen==Screen::NetInput || screen==Screen::NetResult) &&
+  if((screen==Screen::NetInput || screen==Screen::NetResult) &&
       WiFi.status()!=WL_CONNECTED) {
     showMessage("WiFi disconnected",Screen::Home);
   }
