@@ -962,10 +962,10 @@ static void drawAbout() {
   if(aboutScroll<0)aboutScroll=0;
   for(int i=0;i<7 && aboutScroll+i<count;++i){
     int n=aboutScroll+i;
-    line(22+i*14,rows[n],false,
-      (n==0 || n==5 || n==8 || n==10 || n==13)?ACCENT:FG);
+    line(22+i*14,rows[n],n==2,
+      (n==0 || n==2 || n==6 || n==9 || n==11 || n==14)?ACCENT:FG);
   }
-  footer("W/S scroll  B/G0 back");
+  footer("W/S scroll  Enter/Q QR  B/G0 back");
 }
 // Offline QR: the code encodes the public repository URL; no network is needed.
 static void drawAboutQr() {
@@ -1833,6 +1833,7 @@ static void draw() {
     case Screen::IrLibrary: drawIrLibrary(); break;
     case Screen::Status: drawStatus(); break;
     case Screen::About: drawAbout(); break;
+    case Screen::AboutQr: drawAboutQr(); break;
     case Screen::Settings: drawSettings(); break;
     case Screen::WifiPassword: drawWifiPassword(); break;
     case Screen::WifiConnecting: drawWifiConnecting(); break;
