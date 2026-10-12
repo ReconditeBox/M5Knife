@@ -30,7 +30,7 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting, About, Settings, Editor, EditorSearch, HttpFiles };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, IrLibrary, Status, WifiPassword, WifiConnecting, About, Settings, Editor, EditorSearch, HttpFiles };
 enum class Action { None, Mkdir, Rename, Delete, NewText };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -86,9 +86,22 @@ static uint16_t irProfileAddress=0;
 static bool irProfileLoaded=false;
 static bool irProfileSamsung=false;
 static int irRemoteSelection=0;
+static int irLibrarySelection=0;
+static int irLibraryScroll=0;
+static constexpr int IR_LIBRARY_SLOTS=8;
 static const char* const irButtonNames[]={"POWER","VOLUP","VOLDOWN","CHUP","CHDOWN","MUTE"};
 static uint8_t irButtonCommands[6]={};
 static bool irButtonPresent[6]={};
+struct IrSavedProfile {
+  int slot=0;
+  String name;
+  uint16_t address=0;
+  bool samsung=false;
+  uint8_t commands[6]={};
+  bool present[6]={};
+};
+static std::vector<IrSavedProfile> irProfiles;
+static int irActiveSlot=0;
 static bool parseHexValue(String value,uint32_t& out,uint32_t limit) {
   value.trim();
   if(value.startsWith("0x") || value.startsWith("0X")) value.remove(0,2);
@@ -118,6 +131,7 @@ static String wifiTarget, wifiPassword;
 static uint32_t wifiConnectStarted = 0;
 static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 18000;
 static void draw();
+static void irLoadLibrary();
 static void beginWifiConnection(); // Used by SD WiFi config loader.
 static void showMessage(const String&, Screen);
 
@@ -254,7 +268,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.13", 5, 5);
+  d.drawString("M5KNIFE 0.5.14", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -612,7 +626,7 @@ static void settingsActivate(int delta){
   else if(settingsIndex==5){showMessage(saveSettings()?"Settings saved in NVS":"NVS save failed",Screen::Settings);return;}
   else if(settingsIndex==6){ntpStarted=false;startNtp();}
   else if(settingsIndex==7){
-    if(configImportSd()){readSettings();applySettings();showMessage("Config imported to NVS",Screen::Settings);}
+    if(configImportSd()){readSettings();irLoadLibrary();applySettings();showMessage("Config imported to NVS",Screen::Settings);}
     else showMessage("Import failed / no SD",Screen::Settings);
     return;
   }
@@ -620,42 +634,101 @@ static void settingsActivate(int delta){
   applySettings();drawSettings();
 }
 
-static bool irLoadProfile() {
-  String data=activeConfig;
-  if(data.isEmpty()){irNotice="No stored config";return false;}
-  String block=configSection(data,"REMOTE");
-  if(block.isEmpty()){irNotice="No [REMOTE] profile";return false;}
+// Each slot is backed by a complete named section in NVS configuration.
+// Slot 1 accepts the original [REMOTE] section for backwards compatibility.
+static bool irParseProfile(int slot,IrSavedProfile& profile){
+  String block=configSection(activeConfig,slot==1?"REMOTE":String("REMOTE")+String(slot));
+  if(slot==1&&block.isEmpty())block=configSection(activeConfig,"REMOTE1");
+  if(block.isEmpty())return false;
+  uint32_t address=0;
+  bool addressOk=false,protocolOk=false;
+  IrSavedProfile parsed;
+  parsed.slot=slot;
   int offset=0;
-  String name="";uint32_t address=0;bool addressOk=false;
-  uint8_t commands[6]={};bool found[6]={};
-  bool inRemote=true,nec=false,samsung=false;
-  while(offset<(int)block.length()) {
+  while(offset<(int)block.length()){
     int end=block.indexOf('\n',offset);
-    String entry=end<0?block.substring(offset):block.substring(offset,end);
-    offset=end<0?block.length():end+1;entry.trim();
-    if(entry=="[REMOTE]") {inRemote=true;continue;}
-    if(!inRemote || entry.isEmpty() || entry.startsWith("#") || entry.startsWith(";")) continue;
-    int equals=entry.indexOf('='); if(equals<0)continue;
-    String key=entry.substring(0,equals),value=entry.substring(equals+1);
+    String row=end<0?block.substring(offset):block.substring(offset,end);
+    offset=end<0?block.length():end+1;
+    row.trim();
+    if(row.isEmpty()||row.startsWith("#")||row.startsWith(";"))continue;
+    int equal=row.indexOf('=');if(equal<0)continue;
+    String key=row.substring(0,equal),value=row.substring(equal+1);
     key.trim();value.trim();
-    if(key=="NAME")name=value;
-    else if(key=="PROTOCOL") {nec=value.equalsIgnoreCase("NEC");samsung=value.equalsIgnoreCase("SAMSUNG");}
-    else if(key=="ADDRESS")addressOk=parseHexValue(value,address,65535);
+    if(key=="NAME")parsed.name=value.substring(0,32);
+    else if(key=="PROTOCOL"){
+      if(value.equalsIgnoreCase("NEC")){parsed.samsung=false;protocolOk=true;}
+      else if(value.equalsIgnoreCase("SAMSUNG")){parsed.samsung=true;protocolOk=true;}
+      else protocolOk=false;
+    }else if(key=="ADDRESS")addressOk=parseHexValue(value,address,65535);
     else for(int i=0;i<6;i++)if(key==irButtonNames[i]){
-      uint32_t v=0;
-      if(parseHexValue(value,v,255)){commands[i]=(uint8_t)v;found[i]=true;}
+      uint32_t command=0;
+      if(parseHexValue(value,command,255)){
+        parsed.commands[i]=(uint8_t)command;
+        parsed.present[i]=true;
+      }
     }
   }
-  if((!nec && !samsung) || !addressOk){irNotice="IR profile: protocol/address?";return false;}
-  irName=name.length()?name:"IR remote";
-  irProfileAddress=(uint16_t)address;
-  irProfileSamsung=samsung;
-  for(int i=0;i<6;i++){irButtonCommands[i]=commands[i];irButtonPresent[i]=found[i];}
-  irProfileLoaded=true; irNotice="Loaded NVS profile";
+  if(!addressOk||!protocolOk)return false;
+  parsed.address=(uint16_t)address;
+  if(parsed.name.isEmpty())parsed.name="Remote "+String(slot);
+  profile=parsed;return true;
+}
+static void irApplyProfile(size_t index){
+  if(index>=irProfiles.size()){
+    irProfileLoaded=false;
+    irName="No IR profile";
+    irActiveSlot=0;
+    for(int i=0;i<6;i++){irButtonPresent[i]=false;irButtonCommands[i]=0;}
+    return;
+  }
+  const IrSavedProfile& chosen=irProfiles[index];
+  irActiveSlot=chosen.slot;
+  irName=chosen.name;
+  irProfileAddress=chosen.address;
+  irProfileSamsung=chosen.samsung;
+  for(int i=0;i<6;i++){
+    irButtonCommands[i]=chosen.commands[i];
+    irButtonPresent[i]=chosen.present[i];
+  }
+  irProfileLoaded=true;
+  irLibrarySelection=(int)index;
+}
+static bool irSelectProfile(size_t index){
+  if(index>=irProfiles.size())return false;
+  // Do not activate a different profile if NVS could not retain the choice.
+  if(!configReplaceSection("IR_LIBRARY",
+    "SLOT="+String(irProfiles[index].slot)+"\n"))return false;
+  irApplyProfile(index);
+  irNotice="Selected "+irName;
   return true;
 }
-
-
+static void irLoadLibrary(){
+  irProfiles.clear();
+  for(int slot=1;slot<=IR_LIBRARY_SLOTS;slot++){
+    IrSavedProfile parsed;
+    if(irParseProfile(slot,parsed))irProfiles.push_back(parsed);
+  }
+  int savedSlot=1;
+  String block=configSection(activeConfig,"IR_LIBRARY");
+  int offset=0;
+  while(offset<(int)block.length()){
+    int end=block.indexOf('\n',offset);
+    String row=end<0?block.substring(offset):block.substring(offset,end);
+    offset=end<0?block.length():end+1;
+    row.trim();
+    if(row.startsWith("SLOT=")){
+      String value=row.substring(5);
+      bool numeric=!value.isEmpty();
+      for(char c:value)if(c<'0'||c>'9')numeric=false;
+      if(numeric){int requested=value.toInt();if(requested>=1&&requested<=IR_LIBRARY_SLOTS)savedSlot=requested;}
+    }
+  }
+  size_t selected=0;
+  for(size_t i=0;i<irProfiles.size();i++)if(irProfiles[i].slot==savedSlot){selected=i;break;}
+  irApplyProfile(selected);
+  irLibraryScroll=0;
+  irNotice=irProfileLoaded?"Loaded "+String(irProfiles.size())+" IR profile(s)":"No saved IR profiles";
+}
 static void scanDir() {
   entries.clear(); selected=scrollPos=0;
   if (!sdReady) return;
@@ -863,7 +936,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.13",
+    "Version 0.5.14",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
     "",
@@ -895,10 +968,29 @@ static void drawAbout() {
 }
 static void drawIrMenu() {
   header("INFRARED");
-  line(26,"NEC / Samsung TX - GPIO44",false,ACCENT);
-  const char* options[]={"Manual transmit","Remote control","Load SD profile","IR information"};
+  line(26,"NEC / Samsung - "+String(irProfiles.size())+" saved",false,ACCENT);
+  const char* options[]={"Manual transmit","Remote control","Remote library","IR information"};
   for(int i=0;i<4;++i) line(45+i*16,options[i],irMenuIndex==i);
   footer("W/S select Enter  B/G0 back");
+}
+static void drawIrLibrary(){
+  header("IR LIBRARY");
+  line(21,"Saved: "+String(irProfiles.size())+" / "+String(IR_LIBRARY_SLOTS),false,ACCENT);
+  if(irProfiles.empty()){
+    line(47,"No saved remote profiles");
+    line(64,"Import M5KNIFE.CFG",false,MUTED);
+    line(79,"with [REMOTE] sections",false,MUTED);
+  }else{
+    const int first=irLibraryScroll;
+    for(int row=0;row<6 && first+row<(int)irProfiles.size();row++){
+      int index=first+row;
+      const IrSavedProfile& p=irProfiles[index];
+      String label=(irActiveSlot==p.slot?"* ":"  ")+p.name.substring(0,19)+
+        (p.samsung?" [S]":" [N]");
+      line(36+row*13,label,index==irLibrarySelection);
+    }
+  }
+  footer("W/S choose Enter use B back");
 }
 static void drawIrManual() {
   header("IR TRANSMIT");
@@ -922,7 +1014,7 @@ static void drawIrRemote() {
     String name=String(irButtonNames[i])+(irButtonPresent[i]?"":" (unset)");
     line(36+i*13,name,irRemoteSelection==i);
   }
-  footer("W/S choose Enter send B back");
+  footer("W/S choose Enter send L library");
 }
 static void drawNetworkMenu() {
   header("NETWORK");
@@ -1718,6 +1810,7 @@ static void draw() {
     case Screen::IrManual: drawIrManual(); break;
     case Screen::IrEdit: drawIrEdit(); break;
     case Screen::IrRemote: drawIrRemote(); break;
+    case Screen::IrLibrary: drawIrLibrary(); break;
     case Screen::Status: drawStatus(); break;
     case Screen::About: drawAbout(); break;
     case Screen::Settings: drawSettings(); break;
@@ -1867,9 +1960,30 @@ static void handleKeys(const Keys& k) {
     if(k.enter){
       if(irMenuIndex==0){screen=Screen::IrManual;irNotice="";draw();return;}
       if(irMenuIndex==1){screen=Screen::IrRemote;irRemoteSelection=0;draw();return;}
-      if(irMenuIndex==2){irLoadProfile();draw();return;}
-      showMessage("IR TX: GPIO44\\nProtocols: NEC, Samsung\\nProfiles: /M5KNIFE.CFG\\nRX requires extra hardware",Screen::Infrared);return;
+      if(irMenuIndex==2){
+        screen=Screen::IrLibrary;
+        irLibrarySelection=0;
+        for(size_t i=0;i<irProfiles.size();i++)
+          if(irProfiles[i].slot==irActiveSlot)irLibrarySelection=(int)i;
+        irLibraryScroll=std::max(0,irLibrarySelection-5);
+        draw();return;
+      }
+      showMessage("IR TX: GPIO44\\nNEC / Samsung\\nLibrary in NVS\\nImport via Settings",Screen::Infrared);return;
     }
+  } else if(screen==Screen::IrLibrary) {
+    if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
+    if(up&&irLibrarySelection>0)--irLibrarySelection;
+    if(down&&irLibrarySelection+1<(int)irProfiles.size())++irLibrarySelection;
+    if(irLibrarySelection<irLibraryScroll)irLibraryScroll=irLibrarySelection;
+    if(irLibrarySelection>=irLibraryScroll+6)irLibraryScroll=irLibrarySelection-5;
+    if(k.enter){
+      if(irProfiles.empty()){showMessage("No saved remotes",Screen::IrLibrary);return;}
+      if(!irSelectProfile((size_t)irLibrarySelection)){
+        showMessage("Failed saving selection",Screen::IrLibrary);return;
+      }
+      screen=Screen::IrRemote;irRemoteSelection=0;draw();return;
+    }
+    draw();return;
   } else if(screen==Screen::IrManual) {
     if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
     if(typed(k,'a')||typed(k,'c')){
@@ -1892,12 +2006,20 @@ static void handleKeys(const Keys& k) {
     else if(!k.fn)for(char c:k.word)if(irEditText.length()<6 && ((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))irEditText+=c;
   } else if(screen==Screen::IrRemote) {
     if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
+    if(typed(k,'l')){
+      screen=Screen::IrLibrary;
+      irLibrarySelection=0;
+      for(size_t i=0;i<irProfiles.size();i++)
+        if(irProfiles[i].slot==irActiveSlot)irLibrarySelection=(int)i;
+      irLibraryScroll=std::max(0,irLibrarySelection-5);
+      draw();return;
+    }
     if(up && irRemoteSelection>0)--irRemoteSelection;
     if(down && irRemoteSelection<5)++irRemoteSelection;
     if(k.enter){
       if(irProfileLoaded && irButtonPresent[irRemoteSelection])
         irSend(irProfileAddress,irButtonCommands[irRemoteSelection],irProfileSamsung);
-      else irNotice="Load M5KNIFE.CFG / code unset";
+      else irNotice="No remote / code unset";
       draw();return;
     }
   } else if(screen==Screen::WifiPassword) {
@@ -2057,7 +2179,7 @@ void setup() {
       configApply("[SETTINGS]\nAUTO_WIFI=1\nNTP=1\nBRIGHTNESS=128\nSLEEP_MIN=0\nTZ_HOURS=0\n[WIFI]\n[REMOTE]\n[HTTPD]\nUSERNAME=m5knife\nPASSWORD=1234\n");
     }
   }
-  readSettings();applySettings();autoConnectWifi();
+  readSettings();irLoadLibrary();applySettings();autoConnectWifi();
   lastInteraction=millis();
   sdCheckAt=millis()+SD_CHECK_INTERVAL;
   USB.onEvent(usbEvent);
