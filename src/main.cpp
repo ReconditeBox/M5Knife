@@ -30,7 +30,7 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, Status, WifiPassword, WifiConnecting, About, Settings, Editor, EditorSearch, HttpFiles };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, IrLibrary, Status, WifiPassword, WifiConnecting, About, Settings, Editor, EditorSearch, HttpFiles };
 enum class Action { None, Mkdir, Rename, Delete, NewText };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -86,9 +86,22 @@ static uint16_t irProfileAddress=0;
 static bool irProfileLoaded=false;
 static bool irProfileSamsung=false;
 static int irRemoteSelection=0;
+static int irLibrarySelection=0;
+static int irLibraryScroll=0;
+static constexpr int IR_LIBRARY_SLOTS=8;
 static const char* const irButtonNames[]={"POWER","VOLUP","VOLDOWN","CHUP","CHDOWN","MUTE"};
 static uint8_t irButtonCommands[6]={};
 static bool irButtonPresent[6]={};
+struct IrSavedProfile {
+  int slot=0;
+  String name;
+  uint16_t address=0;
+  bool samsung=false;
+  uint8_t commands[6]={};
+  bool present[6]={};
+};
+static std::vector<IrSavedProfile> irProfiles;
+static int irActiveSlot=0;
 static bool parseHexValue(String value,uint32_t& out,uint32_t limit) {
   value.trim();
   if(value.startsWith("0x") || value.startsWith("0X")) value.remove(0,2);
@@ -118,6 +131,7 @@ static String wifiTarget, wifiPassword;
 static uint32_t wifiConnectStarted = 0;
 static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 18000;
 static void draw();
+static void irLoadLibrary();
 static void beginWifiConnection(); // Used by SD WiFi config loader.
 static void showMessage(const String&, Screen);
 
