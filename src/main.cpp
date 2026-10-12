@@ -59,7 +59,9 @@ static bool bleInitialized = false;
 static int netMenuIndex=0;
 static WebServer httpFiles(80);
 static bool httpRunning=false,httpUploadFailed=false,httpRoutesRegistered=false;
-static bool httpQrVisible=false;
+static bool httpHotspotActive=false;
+static uint8_t httpQrMode=0; // 0 status, 1 WiFi join QR, 2 HTTP URL QR
+static String hotspotSsid="M5Knife", hotspotPassword="M5Knife1234";
 static String httpPassword="1234",httpUploadPath;
 static File httpUploadFile;
 static uint32_t httpRequests=0;
@@ -68,7 +70,7 @@ static int netTool=0;
 static size_t netResultScroll=0;
 static String netTarget, netOutput;
 static String netDefaultTarget="8.8.8.8";
-static void startHttpFiles();
+static void startHttpFiles(bool forceHotspot=false);
 static void drawNetworkMenu();
 static void drawNetworkInfo();
 static void drawNetworkInput();
@@ -252,7 +254,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.12", 5, 5);
+  d.drawString("M5KNIFE 0.5.13", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -538,6 +540,23 @@ static void readSettings(){
     String key=row.substring(0,equal),value=row.substring(equal+1);
     if(key=="USERNAME"&&value.length()&&value.length()<=64)httpUsername=value;
     if(key=="PASSWORD"&&value.length()&&value.length()<=64)httpPassword=value;
+  }
+  // Optional [HOTSPOT] config in the same NVS-backed M5KNIFE.CFG.
+  // Missing or invalid values use the built-in defaults, including on re-import.
+  hotspotSsid="M5Knife";
+  hotspotPassword="M5Knife1234";
+  block=configSection(data,"HOTSPOT");offset=0;
+  while(offset<(int)block.length()){
+    int end=block.indexOf('\n',offset);
+    String row=end<0?block.substring(offset):block.substring(offset,end);
+    offset=end<0?block.length():end+1;
+    if(row.endsWith("\r"))row.remove(row.length()-1);
+    int equal=row.indexOf('=');if(equal<0)continue;
+    String key=row.substring(0,equal),value=row.substring(equal+1);
+    if(key=="SSID"&&value.length()>=1&&value.length()<=32 &&
+       value.indexOf('\r')<0 && value.indexOf('\n')<0)hotspotSsid=value;
+    else if(key=="PASSWORD"&&value.length()>=8&&value.length()<=63 &&
+       value.indexOf('\r')<0 && value.indexOf('\n')<0)hotspotPassword=value;
   }
 }
 static bool saveSettings(){
@@ -844,7 +863,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.12",
+    "Version 0.5.13",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
     "",
@@ -907,47 +926,82 @@ static void drawIrRemote() {
 }
 static void drawNetworkMenu() {
   header("NETWORK");
-  const char* options[]={"Network info","DNS lookup","Ping","TCP port scan","LAN scanner","HTTP File Server"};
-  for(int i=0;i<6;++i)line(22+i*16,options[i],i==netMenuIndex);
-  if(WiFi.status()!=WL_CONNECTED)line(101,"WiFi not connected",false,WARN);
+  const char* options[]={"Network info","DNS lookup","Ping","TCP port scan","LAN scanner","HTTP File Server","HTTP Hotspot"};
+  for(int i=0;i<7;++i)line(20+i*14,options[i],i==netMenuIndex);
   footer("W/S select Enter  B/G0 back");
 }
+static String httpServerIp(){
+  return (httpHotspotActive?WiFi.softAPIP():WiFi.localIP()).toString();
+}
+static String hotspotQrEscape(String value){
+  value.replace("\\","\\\\");
+  value.replace(";","\\;");
+  value.replace(",","\\,");
+  value.replace(":","\\:");
+  return value;
+}
 static void drawHttpQr(){
-  // Full-size, high-contrast QR code with a generous white quiet zone.
-  // M5GFX includes its own QR encoder, so no extra dependency is required.
   auto& d=M5Cardputer.Display;
-  const String ip=WiFi.localIP().toString();
-  const String url="http://"+ip;
+  const bool join=httpHotspotActive && httpQrMode==1;
+  const String ip=httpServerIp();
+  const String qr=join?
+    "WIFI:T:WPA;S:"+hotspotQrEscape(hotspotSsid)+";P:"+hotspotQrEscape(hotspotPassword)+";;":
+    "http://"+ip;
   d.fillScreen(BG);
   d.fillRect(1,1,132,132,0xFFFF);
-  d.qrcode(url.c_str(),17,17,100,2);
+  // Use enough QR modules for long custom access-point credentials.
+  const uint8_t version=join?(qr.length()<=50?4:qr.length()<=80?6:8):2;
+  d.qrcode(qr.c_str(),17,17,100,version);
   d.setTextSize(1);
   d.setTextColor(ACCENT,BG);
-  d.drawString("HTTP FILES",140,8);
+  d.drawString(join?"JOIN WIFI":"HTTP FILES",140,8);
   d.setTextColor(FG,BG);
-  d.drawString("Scan to open",140,27);
-  d.drawString("http://",140,46);
-  d.drawString(ip,140,60);
+  d.drawString(join?"Scan to join":"Scan to open",140,27);
+  if(join){
+    d.drawString(hotspotSsid.substring(0,16),140,46);
+    d.drawString("Then Q for URL",140,64);
+  }else{
+    d.drawString("http://",140,46);
+    d.drawString(ip,140,60);
+  }
   d.setTextColor(MUTED,BG);
-  d.drawString("Q/Enter back",140,90);
+  d.drawString("Q/Enter next",140,90);
   d.drawString("B/G0 stop",140,107);
 }
 static void drawHttpFiles(){
-  if(httpQrVisible){drawHttpQr();return;}
-  header("HTTP FILES");
-  line(24,"Server running",false,ACCENT);
-  line(42,"http://"+WiFi.localIP().toString());
-  line(61,"User: "+httpUsername,false,ACCENT);
-  line(78,"Pass: "+httpPassword,false,ACCENT);
-  line(96,"Requests: "+String(httpRequests));
-  footer("Q QR code  R refresh  B/G0 stop");
+  if(httpQrMode!=0){drawHttpQr();return;}
+  if(httpHotspotActive){
+    header("HTTP HOTSPOT");
+    line(22,"WiFi: "+hotspotSsid.substring(0,24),false,ACCENT);
+    line(36,"Key: "+hotspotPassword.substring(0,25));
+    line(50,"URL: http://"+httpServerIp());
+    line(64,"HTTP user: "+httpUsername.substring(0,18));
+    line(78,"HTTP pass: "+httpPassword.substring(0,18));
+    line(92,"Requests: "+String(httpRequests));
+    footer("Q join QR / URL QR  B/G0 stop");
+  }else{
+    header("HTTP FILES");
+    line(24,"Server running",false,ACCENT);
+    line(42,"http://"+httpServerIp());
+    line(61,"User: "+httpUsername,false,ACCENT);
+    line(78,"Pass: "+httpPassword,false,ACCENT);
+    line(96,"Requests: "+String(httpRequests));
+    footer("Q QR code  R refresh  B/G0 stop");
+  }
 }
 static void stopHttpFiles(){
-  httpQrVisible=false;
-  if(!httpRunning)return;
-  if(httpUploadFile){httpUploadFile.close();SD.remove(httpUploadPath.c_str());}
-  httpFiles.stop();
-  httpRunning=false;
+  httpQrMode=0;
+  if(httpRunning){
+    if(httpUploadFile){httpUploadFile.close();SD.remove(httpUploadPath.c_str());}
+    httpFiles.stop();
+    httpRunning=false;
+  }
+  if(httpHotspotActive){
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_STA);
+    httpHotspotActive=false;
+    autoConnectWifi();
+  }
 }
 static bool httpValidPath(const String& path){
   if(!path.startsWith("/")||path.length()>180||path.indexOf('\\')>=0)return false;
@@ -1278,9 +1332,21 @@ static void httpUploadDone(){
   if(httpUploadFailed){httpFiles.send(409,"text/plain","Upload failed or file exists");return;}
   String dir=httpFolderArg();httpRedirect(dir.length()?dir:"/");
 }
-static void startHttpFiles(){
-  if(WiFi.status()!=WL_CONNECTED){showMessage("Connect to WiFi first",Screen::Network);return;}
+static void startHttpFiles(bool forceHotspot){
   if(usbActive || (!sdReady && !mountSd())){showMessage("SD unavailable",Screen::Network);return;}
+  // Keep the existing router-connected mode. Otherwise create a private Wi-Fi
+  // access point for direct phone/computer access to the HTTP file manager.
+  if(forceHotspot || WiFi.status()!=WL_CONNECTED){
+    WiFi.disconnect(false,false);
+    WiFi.mode(WIFI_AP);
+    if(!WiFi.softAP(hotspotSsid.c_str(),hotspotPassword.c_str())){
+      WiFi.mode(WIFI_STA);
+      autoConnectWifi();
+      showMessage("Hotspot start failed",Screen::Network);
+      return;
+    }
+    httpHotspotActive=true;
+  }else httpHotspotActive=false;
   // Credentials loaded from NVS [HTTPD], otherwise defaults are used.
   if(httpPassword.isEmpty())httpPassword="1234";
   httpRequests=0;httpUploadFailed=false;httpUploadPath="";
@@ -1297,7 +1363,7 @@ static void startHttpFiles(){
   }
   httpFiles.begin();
   httpRunning=true;
-  httpQrVisible=false;
+  httpQrMode=0;
   screen=Screen::HttpFiles;draw();
 }
 
@@ -1718,9 +1784,7 @@ static void handleKeys(const Keys& k) {
         case 1: startUsb(); break;
         case 2: scanWifi(); break;
         case 3:
-          if(WiFi.status()==WL_CONNECTED) {
-            screen=Screen::Network;netMenuIndex=0;draw();
-          } else showMessage("Connect to WiFi first",Screen::Home);
+          screen=Screen::Network;netMenuIndex=0;draw();
           break;
         case 4: scanBluetooth(); break;
         case 5:
@@ -1753,10 +1817,13 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::Network) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && netMenuIndex>0)--netMenuIndex;
-    if(down && netMenuIndex<5)++netMenuIndex;
+    if(down && netMenuIndex<6)++netMenuIndex;
     if(k.enter){
       if(netMenuIndex==0){screen=Screen::NetInfo;draw();return;}
-      if(netMenuIndex==5){startHttpFiles();return;}
+      if(netMenuIndex==5||netMenuIndex==6){startHttpFiles(netMenuIndex==6);return;}
+      if(WiFi.status()!=WL_CONNECTED){
+        showMessage("Connect to WiFi first",Screen::Network);return;
+      }
       netTool=netMenuIndex;
       netPingMode=(netTool==2);
       if(netTool==4){
@@ -1772,7 +1839,11 @@ static void handleKeys(const Keys& k) {
     }
   } else if(screen==Screen::HttpFiles){
     if(escape||backspace||typed(k,'b')){stopHttpFiles();screen=Screen::Network;draw();return;}
-    if(typed(k,'q')||k.enter){httpQrVisible=!httpQrVisible;drawHttpFiles();return;}
+    if(typed(k,'q')||k.enter){
+      if(httpHotspotActive)httpQrMode=(httpQrMode+1)%3;
+      else httpQrMode=httpQrMode==0?2:0;
+      drawHttpFiles();return;
+    }
     if(typed(k,'r'))drawHttpFiles();
     return;
   } else if(screen==Screen::NetInfo) {
@@ -2018,7 +2089,11 @@ void loop() {
   M5Cardputer.update();
   startNtp();
   if(httpRunning){
-    if(WiFi.status()!=WL_CONNECTED){stopHttpFiles();showMessage("HTTP server stopped: WiFi lost",Screen::Home);}
+    const wifi_mode_t mode=WiFi.getMode();
+    const bool connectionLost=httpHotspotActive?
+      (mode!=WIFI_AP && mode!=WIFI_AP_STA):
+      WiFi.status()!=WL_CONNECTED;
+    if(connectionLost){stopHttpFiles();showMessage("HTTP server stopped: WiFi lost",Screen::Home);}
     else httpFiles.handleClient();
   }
   if(sleepMinutes>0 && (uint32_t)(millis()-lastInteraction)>(uint32_t)sleepMinutes*60000UL)
@@ -2045,8 +2120,7 @@ void loop() {
       showWifiConnectionResult(false);
     }
   }
-  if((screen==Screen::Network || screen==Screen::NetInfo ||
-      screen==Screen::NetInput || screen==Screen::NetResult) &&
+  if((screen==Screen::NetInput || screen==Screen::NetResult) &&
       WiFi.status()!=WL_CONNECTED) {
     showMessage("WiFi disconnected",Screen::Home);
   }
