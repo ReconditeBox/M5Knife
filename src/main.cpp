@@ -929,42 +929,78 @@ static void drawNetworkMenu() {
   if(WiFi.status()!=WL_CONNECTED)line(101,"WiFi not connected",false,WARN);
   footer("W/S select Enter  B/G0 back");
 }
+static String httpServerIp(){
+  return (httpHotspotActive?WiFi.softAPIP():WiFi.localIP()).toString();
+}
+static String hotspotQrEscape(String value){
+  value.replace("\\","\\\\");
+  value.replace(";","\\;");
+  value.replace(",","\\,");
+  value.replace(":","\\:");
+  return value;
+}
 static void drawHttpQr(){
-  // Full-size, high-contrast QR code with a generous white quiet zone.
-  // M5GFX includes its own QR encoder, so no extra dependency is required.
   auto& d=M5Cardputer.Display;
-  const String ip=WiFi.localIP().toString();
-  const String url="http://"+ip;
+  const bool join=httpHotspotActive && httpQrMode==1;
+  const String ip=httpServerIp();
+  const String qr=join?
+    "WIFI:T:WPA;S:"+hotspotQrEscape(hotspotSsid)+";P:"+hotspotQrEscape(hotspotPassword)+";;":
+    "http://"+ip;
   d.fillScreen(BG);
   d.fillRect(1,1,132,132,0xFFFF);
-  d.qrcode(url.c_str(),17,17,100,2);
+  // Use enough QR modules for long custom access-point credentials.
+  const uint8_t version=join?(qr.length()<=50?4:qr.length()<=80?6:8):2;
+  d.qrcode(qr.c_str(),17,17,100,version);
   d.setTextSize(1);
   d.setTextColor(ACCENT,BG);
-  d.drawString("HTTP FILES",140,8);
+  d.drawString(join?"JOIN WIFI":"HTTP FILES",140,8);
   d.setTextColor(FG,BG);
-  d.drawString("Scan to open",140,27);
-  d.drawString("http://",140,46);
-  d.drawString(ip,140,60);
+  d.drawString(join?"Scan to join":"Scan to open",140,27);
+  if(join){
+    d.drawString(hotspotSsid.substring(0,16),140,46);
+    d.drawString("Then Q for URL",140,64);
+  }else{
+    d.drawString("http://",140,46);
+    d.drawString(ip,140,60);
+  }
   d.setTextColor(MUTED,BG);
-  d.drawString("Q/Enter back",140,90);
+  d.drawString("Q/Enter next",140,90);
   d.drawString("B/G0 stop",140,107);
 }
 static void drawHttpFiles(){
-  if(httpQrVisible){drawHttpQr();return;}
-  header("HTTP FILES");
-  line(24,"Server running",false,ACCENT);
-  line(42,"http://"+WiFi.localIP().toString());
-  line(61,"User: "+httpUsername,false,ACCENT);
-  line(78,"Pass: "+httpPassword,false,ACCENT);
-  line(96,"Requests: "+String(httpRequests));
-  footer("Q QR code  R refresh  B/G0 stop");
+  if(httpQrMode!=0){drawHttpQr();return;}
+  if(httpHotspotActive){
+    header("HTTP HOTSPOT");
+    line(22,"WiFi: "+hotspotSsid.substring(0,24),false,ACCENT);
+    line(36,"Key: "+hotspotPassword.substring(0,25));
+    line(50,"URL: http://"+httpServerIp());
+    line(64,"HTTP user: "+httpUsername.substring(0,18));
+    line(78,"HTTP pass: "+httpPassword.substring(0,18));
+    line(92,"Requests: "+String(httpRequests));
+    footer("Q join QR / URL QR  B/G0 stop");
+  }else{
+    header("HTTP FILES");
+    line(24,"Server running",false,ACCENT);
+    line(42,"http://"+httpServerIp());
+    line(61,"User: "+httpUsername,false,ACCENT);
+    line(78,"Pass: "+httpPassword,false,ACCENT);
+    line(96,"Requests: "+String(httpRequests));
+    footer("Q QR code  R refresh  B/G0 stop");
+  }
 }
 static void stopHttpFiles(){
-  httpQrVisible=false;
-  if(!httpRunning)return;
-  if(httpUploadFile){httpUploadFile.close();SD.remove(httpUploadPath.c_str());}
-  httpFiles.stop();
-  httpRunning=false;
+  httpQrMode=0;
+  if(httpRunning){
+    if(httpUploadFile){httpUploadFile.close();SD.remove(httpUploadPath.c_str());}
+    httpFiles.stop();
+    httpRunning=false;
+  }
+  if(httpHotspotActive){
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_STA);
+    httpHotspotActive=false;
+    autoConnectWifi();
+  }
 }
 static bool httpValidPath(const String& path){
   if(!path.startsWith("/")||path.length()>180||path.indexOf('\\')>=0)return false;
