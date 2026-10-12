@@ -542,7 +542,9 @@ static void readSettings(){
     if(key=="PASSWORD"&&value.length()&&value.length()<=64)httpPassword=value;
   }
   // Optional [HOTSPOT] config in the same NVS-backed M5KNIFE.CFG.
-  // Invalid values leave the safe built-in defaults unchanged.
+  // Missing or invalid values use the built-in defaults, including on re-import.
+  hotspotSsid="M5Knife";
+  hotspotPassword="M5Knife1234";
   block=configSection(data,"HOTSPOT");offset=0;
   while(offset<(int)block.length()){
     int end=block.indexOf('\n',offset);
