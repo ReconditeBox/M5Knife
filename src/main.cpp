@@ -966,6 +966,25 @@ static void drawAbout() {
   }
   footer("W/S scroll  B/G0 back");
 }
+// Offline QR: the code encodes the public repository URL; no network is needed.
+static void drawAboutQr() {
+  auto& d=M5Cardputer.Display;
+  static constexpr const char* REPO_URL="https://github.com/ReconditeBox/M5Knife";
+  d.fillScreen(BG);
+  d.fillRect(1,1,132,132,0xFFFF);
+  d.qrcode(REPO_URL,17,17,100,4);
+  d.setTextSize(1);
+  d.setTextColor(ACCENT,BG);
+  d.drawString("M5KNIFE",140,8);
+  d.setTextColor(FG,BG);
+  d.drawString("GitHub project",140,28);
+  d.drawString("Scan to open",140,46);
+  d.drawString("github.com",140,68);
+  d.drawString("ReconditeBox/",140,82);
+  d.drawString("M5Knife",140,96);
+  d.setTextColor(MUTED,BG);
+  d.drawString("B/Enter back",140,117);
+}
 static void drawIrMenu() {
   header("INFRARED");
   line(26,"NEC / Samsung - "+String(irProfiles.size())+" saved",false,ACCENT);
