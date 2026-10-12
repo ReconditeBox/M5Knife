@@ -234,3 +234,11 @@ The ESP32-S3's internal non-volatile flash (NVS, via Preferences) is now the **p
 Two Settings menu actions manage the same human-editable INI-style file: **Import config from SD** (replaces NVS configuration from `/M5KNIFE.CFG`) and **Export config to SD** (writes current NVS configuration to that file). Import checks file size and required sections before writing; take a backup before experimenting. Export uses a temporary file and backup during updates. The firmware does not erase the NVS partition on normal firmware upload; a full-flash erase or repartitioning can remove settings. NVS contains plaintext Wi-Fi and HTTPD credentials and is not encrypted by this firmware.
 
 This is a development branch, version **0.5.11**, not yet compiled or hardware-tested. Stable `main` remains **0.4.9**.
+
+### HTTP File Server QR code (development branch)
+
+While the HTTP File Server is running under **Network → HTTP File Server**, press **Q** (or **Enter**) to show a QR code containing the current `http://<Cardputer-LAN-IP>` URL. Scan it with a phone on the same reachable network to open the existing browser-based file manager. Press **Q** or **Enter** again to return to the address/credentials/status display. Press **B** or **G0** to stop the HTTP server; showing the QR code does **not** stop serving web requests. **R** refreshes whichever HTTP display is showing.
+
+The QR code uses the QR renderer already in M5GFX, with a white border for scanning on the Cardputer's small screen. HTTP Basic authentication still applies; the QR code holds only the server URL, not the username or password. Keep the server on a trusted network. No additional library dependency is needed.
+
+This change is on `feature/http-qr-code`, uncompiled and awaiting Cardputer/phone testing; stable `main` remains at M5Knife 0.5.11.
