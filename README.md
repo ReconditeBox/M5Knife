@@ -78,7 +78,7 @@ M5Knife's launcher displays **three tiles at a time** and scrolls horizontally t
 | `Fn + ;` / `Fn + .` | Up / down cursor keys |
 | `Enter` | Select, open, or activate |
 | `B` | Back in most menus |
-| `Fn + \`` | Escape/cancel in input and editor screens |
+| **Fn + backtick** | Escape/cancel in input and editor screens |
 | **G0** | Return to the main launcher; USB mode protects against unsafe exit |
 | `R` | Refresh where offered |
 
@@ -112,7 +112,7 @@ The **Files** screen lists directories before files. Navigate with W/S and open 
 | `M` | Open SD disk information / format menu |
 | `R` | Refresh or retry mounting SD |
 
-Opening a file loads the built-in text viewer; the maximum file size is **8 KiB**. In the viewer, W/S scroll, F finds text and E switches to the editor. In edit mode, use cursor keys, Del and Enter to change text; **Fn+S** saves. Use **Fn+\`** to exit the viewer/editor. Files larger than 8 KiB are not supported by this viewer. Carriage returns are removed when text is loaded, so saving can change CRLF line endings to LF: do not use the editor on files whose exact bytes must be preserved.
+Opening a file loads the built-in text viewer; the maximum file size is **8 KiB**. In the viewer, W/S scroll, F finds text and E switches to the editor. In edit mode, use cursor keys, Del and Enter to change text; **Fn+S** saves. Use **Fn + backtick** to exit the viewer/editor. Files larger than 8 KiB are not supported by this viewer. Carriage returns are removed when text is loaded, so saving can change CRLF line endings to LF: do not use the editor on files whose exact bytes must be preserved.
 
 Saves use a temporary file and a backup/rename sequence. The disk menu reports SD capacity and usage. **SD formatting is displayed but deliberately disabled.** Recursive copying/moving files or directories is not implemented.
 
