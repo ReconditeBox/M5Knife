@@ -2,7 +2,7 @@
 
 **A standalone utilities toolkit for the M5Stack Cardputer Adv.**
 
-**Current firmware: 0.5.14**
+**Current firmware: 0.5.15**
 
 M5Knife combines an SD card file manager, USB card reader, Wi-Fi and network tools, Bluetooth scanning, infrared remotes and system information in a small keyboard-driven launcher. It also runs an HTTP file manager that can be reached over an existing Wi-Fi network or directly from a phone using the Cardputer's own hotspot.
 
@@ -156,7 +156,7 @@ DNS, ping and scanning need a normal Wi-Fi connection. The LAN scanner is **TCP-
 
 **Settings** offers Auto WiFi, NTP sync, UTC offset, brightness, sleep timeout (including **Never**, the default), Save settings, Sync time now, and configuration Import/Export. Select a row using W/S; use A/D or Enter to change/activate it. Choose **Save settings** to persist manual settings changes in NVS.
 
-**Status** is scrollable and reports connected Wi-Fi and IP, Wi-Fi/Bluetooth MAC addresses, SD total/used/free space, current/minimum/total heap, battery percentage/voltage and local clock. **About** identifies the firmware, version and hardware.
+**Status** is scrollable and reports connected Wi-Fi and IP, Wi-Fi/Bluetooth MAC addresses, SD total/used/free space, current/minimum/total heap, battery percentage/voltage and local clock. **About** identifies the firmware, version and hardware. From **About**, press **Enter** or **Q** on the highlighted **GitHub QR** option to display a scannable link to https://github.com/ReconditeBox/M5Knife. Press **B**, **Enter** or **Q** to return to About, or **G0** to return home. The QR code is generated locally and does not need Wi-Fi or an SD card.
 
 ## HTTP file manager and hotspot
 

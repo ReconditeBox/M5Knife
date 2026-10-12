@@ -30,7 +30,7 @@ static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, IrLibrary, Status, WifiPassword, WifiConnecting, About, Settings, Editor, EditorSearch, HttpFiles };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, IrLibrary, Status, WifiPassword, WifiConnecting, About, AboutQr, Settings, Editor, EditorSearch, HttpFiles };
 enum class Action { None, Mkdir, Rename, Delete, NewText };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -268,7 +268,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.14", 5, 5);
+  d.drawString("M5KNIFE 0.5.15", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -936,7 +936,8 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.14",
+    "Version 0.5.15",
+    "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
     "",
@@ -961,10 +962,29 @@ static void drawAbout() {
   if(aboutScroll<0)aboutScroll=0;
   for(int i=0;i<7 && aboutScroll+i<count;++i){
     int n=aboutScroll+i;
-    line(22+i*14,rows[n],false,
-      (n==0 || n==5 || n==8 || n==10 || n==13)?ACCENT:FG);
+    line(22+i*14,rows[n],n==2,
+      (n==0 || n==2 || n==6 || n==9 || n==11 || n==14)?ACCENT:FG);
   }
-  footer("W/S scroll  B/G0 back");
+  footer("W/S scroll  Enter/Q QR  B/G0 back");
+}
+// Offline QR: the code encodes the public repository URL; no network is needed.
+static void drawAboutQr() {
+  auto& d=M5Cardputer.Display;
+  static constexpr const char* REPO_URL="https://github.com/ReconditeBox/M5Knife";
+  d.fillScreen(BG);
+  d.fillRect(1,1,132,132,0xFFFF);
+  d.qrcode(REPO_URL,17,17,100,4);
+  d.setTextSize(1);
+  d.setTextColor(ACCENT,BG);
+  d.drawString("M5KNIFE",140,8);
+  d.setTextColor(FG,BG);
+  d.drawString("GitHub project",140,28);
+  d.drawString("Scan to open",140,46);
+  d.drawString("github.com",140,68);
+  d.drawString("ReconditeBox/",140,82);
+  d.drawString("M5Knife",140,96);
+  d.setTextColor(MUTED,BG);
+  d.drawString("B/Enter back",140,117);
 }
 static void drawIrMenu() {
   header("INFRARED");
@@ -1813,6 +1833,7 @@ static void draw() {
     case Screen::IrLibrary: drawIrLibrary(); break;
     case Screen::Status: drawStatus(); break;
     case Screen::About: drawAbout(); break;
+    case Screen::AboutQr: drawAboutQr(); break;
     case Screen::Settings: drawSettings(); break;
     case Screen::WifiPassword: drawWifiPassword(); break;
     case Screen::WifiConnecting: drawWifiConnecting(); break;
@@ -1904,9 +1925,15 @@ static void handleKeys(const Keys& k) {
     return;
   } else if(screen==Screen::About) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
+    if(typed(k,'q')||k.enter){screen=Screen::AboutQr;draw();return;}
     if(up && aboutScroll>0)--aboutScroll;
-    if(down && aboutScroll<13)++aboutScroll;
+    if(down && aboutScroll<14)++aboutScroll;
     drawAbout();return;
+  } else if(screen==Screen::AboutQr) {
+    if(escape||backspace||typed(k,'b')||typed(k,'q')||k.enter){
+      screen=Screen::About;draw();return;
+    }
+    return;
   } else if(screen==Screen::Network) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && netMenuIndex>0)--netMenuIndex;
