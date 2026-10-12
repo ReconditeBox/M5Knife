@@ -634,42 +634,101 @@ static void settingsActivate(int delta){
   applySettings();drawSettings();
 }
 
-static bool irLoadProfile() {
-  String data=activeConfig;
-  if(data.isEmpty()){irNotice="No stored config";return false;}
-  String block=configSection(data,"REMOTE");
-  if(block.isEmpty()){irNotice="No [REMOTE] profile";return false;}
+// Each slot is backed by a complete named section in NVS configuration.
+// Slot 1 accepts the original [REMOTE] section for backwards compatibility.
+static bool irParseProfile(int slot,IrSavedProfile& profile){
+  String block=configSection(activeConfig,slot==1?"REMOTE":String("REMOTE")+String(slot));
+  if(slot==1&&block.isEmpty())block=configSection(activeConfig,"REMOTE1");
+  if(block.isEmpty())return false;
+  uint32_t address=0;
+  bool addressOk=false,protocolOk=false;
+  IrSavedProfile parsed;
+  parsed.slot=slot;
   int offset=0;
-  String name="";uint32_t address=0;bool addressOk=false;
-  uint8_t commands[6]={};bool found[6]={};
-  bool inRemote=true,nec=false,samsung=false;
-  while(offset<(int)block.length()) {
+  while(offset<(int)block.length()){
     int end=block.indexOf('\n',offset);
-    String entry=end<0?block.substring(offset):block.substring(offset,end);
-    offset=end<0?block.length():end+1;entry.trim();
-    if(entry=="[REMOTE]") {inRemote=true;continue;}
-    if(!inRemote || entry.isEmpty() || entry.startsWith("#") || entry.startsWith(";")) continue;
-    int equals=entry.indexOf('='); if(equals<0)continue;
-    String key=entry.substring(0,equals),value=entry.substring(equals+1);
+    String row=end<0?block.substring(offset):block.substring(offset,end);
+    offset=end<0?block.length():end+1;
+    row.trim();
+    if(row.isEmpty()||row.startsWith("#")||row.startsWith(";"))continue;
+    int equal=row.indexOf('=');if(equal<0)continue;
+    String key=row.substring(0,equal),value=row.substring(equal+1);
     key.trim();value.trim();
-    if(key=="NAME")name=value;
-    else if(key=="PROTOCOL") {nec=value.equalsIgnoreCase("NEC");samsung=value.equalsIgnoreCase("SAMSUNG");}
-    else if(key=="ADDRESS")addressOk=parseHexValue(value,address,65535);
+    if(key=="NAME")parsed.name=value.substring(0,32);
+    else if(key=="PROTOCOL"){
+      if(value.equalsIgnoreCase("NEC")){parsed.samsung=false;protocolOk=true;}
+      else if(value.equalsIgnoreCase("SAMSUNG")){parsed.samsung=true;protocolOk=true;}
+      else protocolOk=false;
+    }else if(key=="ADDRESS")addressOk=parseHexValue(value,address,65535);
     else for(int i=0;i<6;i++)if(key==irButtonNames[i]){
-      uint32_t v=0;
-      if(parseHexValue(value,v,255)){commands[i]=(uint8_t)v;found[i]=true;}
+      uint32_t command=0;
+      if(parseHexValue(value,command,255)){
+        parsed.commands[i]=(uint8_t)command;
+        parsed.present[i]=true;
+      }
     }
   }
-  if((!nec && !samsung) || !addressOk){irNotice="IR profile: protocol/address?";return false;}
-  irName=name.length()?name:"IR remote";
-  irProfileAddress=(uint16_t)address;
-  irProfileSamsung=samsung;
-  for(int i=0;i<6;i++){irButtonCommands[i]=commands[i];irButtonPresent[i]=found[i];}
-  irProfileLoaded=true; irNotice="Loaded NVS profile";
+  if(!addressOk||!protocolOk)return false;
+  parsed.address=(uint16_t)address;
+  if(parsed.name.isEmpty())parsed.name="Remote "+String(slot);
+  profile=parsed;return true;
+}
+static void irApplyProfile(size_t index){
+  if(index>=irProfiles.size()){
+    irProfileLoaded=false;
+    irName="No IR profile";
+    irActiveSlot=0;
+    for(int i=0;i<6;i++){irButtonPresent[i]=false;irButtonCommands[i]=0;}
+    return;
+  }
+  const IrSavedProfile& chosen=irProfiles[index];
+  irActiveSlot=chosen.slot;
+  irName=chosen.name;
+  irProfileAddress=chosen.address;
+  irProfileSamsung=chosen.samsung;
+  for(int i=0;i<6;i++){
+    irButtonCommands[i]=chosen.commands[i];
+    irButtonPresent[i]=chosen.present[i];
+  }
+  irProfileLoaded=true;
+  irLibrarySelection=(int)index;
+}
+static bool irSelectProfile(size_t index){
+  if(index>=irProfiles.size())return false;
+  // Do not activate a different profile if NVS could not retain the choice.
+  if(!configReplaceSection("IR_LIBRARY",
+    "SLOT="+String(irProfiles[index].slot)+"\n"))return false;
+  irApplyProfile(index);
+  irNotice="Selected "+irName;
   return true;
 }
-
-
+static void irLoadLibrary(){
+  irProfiles.clear();
+  for(int slot=1;slot<=IR_LIBRARY_SLOTS;slot++){
+    IrSavedProfile parsed;
+    if(irParseProfile(slot,parsed))irProfiles.push_back(parsed);
+  }
+  int savedSlot=1;
+  String block=configSection(activeConfig,"IR_LIBRARY");
+  int offset=0;
+  while(offset<(int)block.length()){
+    int end=block.indexOf('\n',offset);
+    String row=end<0?block.substring(offset):block.substring(offset,end);
+    offset=end<0?block.length():end+1;
+    row.trim();
+    if(row.startsWith("SLOT=")){
+      String value=row.substring(5);
+      bool numeric=!value.isEmpty();
+      for(char c:value)if(c<'0'||c>'9')numeric=false;
+      if(numeric){int requested=value.toInt();if(requested>=1&&requested<=IR_LIBRARY_SLOTS)savedSlot=requested;}
+    }
+  }
+  size_t selected=0;
+  for(size_t i=0;i<irProfiles.size();i++)if(irProfiles[i].slot==savedSlot){selected=i;break;}
+  irApplyProfile(selected);
+  irLibraryScroll=0;
+  irNotice=irProfileLoaded?"Loaded "+String(irProfiles.size())+" IR profile(s)":"No saved IR profiles";
+}
 static void scanDir() {
   entries.clear(); selected=scrollPos=0;
   if (!sdReady) return;
