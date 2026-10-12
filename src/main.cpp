@@ -59,6 +59,7 @@ static bool bleInitialized = false;
 static int netMenuIndex=0;
 static WebServer httpFiles(80);
 static bool httpRunning=false,httpUploadFailed=false,httpRoutesRegistered=false;
+static bool httpQrVisible=false;
 static String httpPassword="1234",httpUploadPath;
 static File httpUploadFile;
 static uint32_t httpRequests=0;
@@ -911,16 +912,38 @@ static void drawNetworkMenu() {
   if(WiFi.status()!=WL_CONNECTED)line(101,"WiFi not connected",false,WARN);
   footer("W/S select Enter  B/G0 back");
 }
+static void drawHttpQr(){
+  // Full-size, high-contrast QR code with a generous white quiet zone.
+  // M5GFX includes its own QR encoder, so no extra dependency is required.
+  auto& d=M5Cardputer.Display;
+  const String ip=WiFi.localIP().toString();
+  const String url="http://"+ip;
+  d.fillScreen(BG);
+  d.fillRect(1,1,132,132,0xFFFF);
+  d.qrcode(url.c_str(),17,17,100,2);
+  d.setTextSize(1);
+  d.setTextColor(ACCENT,BG);
+  d.drawString("HTTP FILES",140,8);
+  d.setTextColor(FG,BG);
+  d.drawString("Scan to open",140,27);
+  d.drawString("http://",140,46);
+  d.drawString(ip,140,60);
+  d.setTextColor(MUTED,BG);
+  d.drawString("Q/Enter back",140,90);
+  d.drawString("B/G0 stop",140,107);
+}
 static void drawHttpFiles(){
+  if(httpQrVisible){drawHttpQr();return;}
   header("HTTP FILES");
   line(24,"Server running",false,ACCENT);
   line(42,"http://"+WiFi.localIP().toString());
   line(61,"User: "+httpUsername,false,ACCENT);
   line(78,"Pass: "+httpPassword,false,ACCENT);
   line(96,"Requests: "+String(httpRequests));
-  footer("G0 / B stop server");
+  footer("Q QR code  R refresh  B/G0 stop");
 }
 static void stopHttpFiles(){
+  httpQrVisible=false;
   if(!httpRunning)return;
   if(httpUploadFile){httpUploadFile.close();SD.remove(httpUploadPath.c_str());}
   httpFiles.stop();
@@ -1274,6 +1297,7 @@ static void startHttpFiles(){
   }
   httpFiles.begin();
   httpRunning=true;
+  httpQrVisible=false;
   screen=Screen::HttpFiles;draw();
 }
 
@@ -1748,6 +1772,7 @@ static void handleKeys(const Keys& k) {
     }
   } else if(screen==Screen::HttpFiles){
     if(escape||backspace||typed(k,'b')){stopHttpFiles();screen=Screen::Network;draw();return;}
+    if(typed(k,'q')||k.enter){httpQrVisible=!httpQrVisible;drawHttpFiles();return;}
     if(typed(k,'r'))drawHttpFiles();
     return;
   } else if(screen==Screen::NetInfo) {
