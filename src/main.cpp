@@ -968,10 +968,29 @@ static void drawAbout() {
 }
 static void drawIrMenu() {
   header("INFRARED");
-  line(26,"NEC / Samsung TX - GPIO44",false,ACCENT);
-  const char* options[]={"Manual transmit","Remote control","Load SD profile","IR information"};
+  line(26,"NEC / Samsung - "+String(irProfiles.size())+" saved",false,ACCENT);
+  const char* options[]={"Manual transmit","Remote control","Remote library","IR information"};
   for(int i=0;i<4;++i) line(45+i*16,options[i],irMenuIndex==i);
   footer("W/S select Enter  B/G0 back");
+}
+static void drawIrLibrary(){
+  header("IR LIBRARY");
+  line(21,"Saved: "+String(irProfiles.size())+" / "+String(IR_LIBRARY_SLOTS),false,ACCENT);
+  if(irProfiles.empty()){
+    line(47,"No saved remote profiles");
+    line(64,"Import M5KNIFE.CFG",false,MUTED);
+    line(79,"with [REMOTE] sections",false,MUTED);
+  }else{
+    const int first=irLibraryScroll;
+    for(int row=0;row<6 && first+row<(int)irProfiles.size();row++){
+      int index=first+row;
+      const IrSavedProfile& p=irProfiles[index];
+      String label=(irActiveSlot==p.slot?"* ":"  ")+p.name.substring(0,19)+
+        (p.samsung?" [S]":" [N]");
+      line(36+row*13,label,index==irLibrarySelection);
+    }
+  }
+  footer("W/S choose Enter use B back");
 }
 static void drawIrManual() {
   header("IR TRANSMIT");
@@ -995,7 +1014,7 @@ static void drawIrRemote() {
     String name=String(irButtonNames[i])+(irButtonPresent[i]?"":" (unset)");
     line(36+i*13,name,irRemoteSelection==i);
   }
-  footer("W/S choose Enter send B back");
+  footer("W/S choose Enter send L library");
 }
 static void drawNetworkMenu() {
   header("NETWORK");
@@ -1791,6 +1810,7 @@ static void draw() {
     case Screen::IrManual: drawIrManual(); break;
     case Screen::IrEdit: drawIrEdit(); break;
     case Screen::IrRemote: drawIrRemote(); break;
+    case Screen::IrLibrary: drawIrLibrary(); break;
     case Screen::Status: drawStatus(); break;
     case Screen::About: drawAbout(); break;
     case Screen::Settings: drawSettings(); break;
