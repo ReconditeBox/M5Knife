@@ -242,3 +242,28 @@ While the HTTP File Server is running under **Network → HTTP File Server**, pr
 The QR code uses the QR renderer already in M5GFX, with a white border for scanning on the Cardputer's small screen. HTTP Basic authentication still applies; the QR code holds only the server URL, not the username or password. Keep the server on a trusted network. No additional library dependency is needed.
 
 The HTTP QR-code view has been accepted as working on the Cardputer for M5Knife 0.5.12.
+
+## Wi-Fi hotspot and HTTP file server — 0.5.13 development
+
+The **Network** menu now has two HTTP options:
+
+- **HTTP File Server:** Keeps the existing router-connected mode if Wi-Fi is already connected. If not connected, starts a temporary hotspot automatically.
+- **HTTP Hotspot:** Explicitly creates a hotspot even if the Cardputer was connected to a router. This temporarily disconnects the station connection; the normal auto-connect attempt resumes when the hotspot closes.
+
+The Cardputer hotspot is a password-protected Wi-Fi access point. Defaults are **SSID: `M5Knife`**, **Wi-Fi password: `M5Knife1234`**. These are separate from the HTTP Basic authentication credentials (still `m5knife` / `1234` unless changed under `[HTTPD]`). The Cardputer shows its current IP/URL and both sets of credentials. Join its Wi-Fi network from a phone or computer, then open the displayed `http://...` address; the typical default hotspot address is `http://192.168.4.1`. Your device might warn that the hotspot has no Internet access; choose to remain connected.
+
+Within HTTPD, press **Q** or **Enter** to cycle between the normal status screen, a **join Wi-Fi QR code** and a **file-server URL QR code** while hotspot mode is running. In normal router mode, Q switches between status and the URL QR code. The HTTP server continues handling requests while QR codes are shown. **B** or **G0** stops the web server and its own hotspot. This does not erase NVS or change Wi-Fi profiles.
+
+Optional custom hotspot credentials can be specified in the existing NVS-backed `/M5KNIFE.CFG` import/export format:
+
+```ini
+[HOTSPOT]
+SSID=M5Knife
+PASSWORD=M5Knife1234
+```
+
+The SSID must be 1–32 bytes, and the WPA2 password 8–63 bytes. Change the SD file, then use **Settings → Import config from SD** (or reboot after a fresh NVS initialization) to load it; changes take effect the next time HTTPD starts. The `[HOTSPOT]` section is optional and built-in defaults are used otherwise. Settings exported from existing NVS without this section still work.
+
+The hotspot provides a local connection to M5Knife, not Internet access. The HTTP file manager remains fully read/write, and the protocol is **plain HTTP**, so use only with devices you trust. For security, consider setting distinct private HTTP credentials through `[HTTPD]`.
+
+**This feature is on `feature/wifi-hotspot` for compile and physical testing. Stable `main` remains M5Knife 0.5.12 until testing and approval.**
