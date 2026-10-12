@@ -1,124 +1,256 @@
-# M5Knife — Cardputer Adv
+# M5Knife
 
-First **development build**, independent of the Cardputer CP/M project.
+**A standalone utilities toolkit for the M5Stack Cardputer Adv.**
 
-## What is implemented
+**Current firmware: 0.5.14**
 
-- Six-icon horizontal scrolling launcher: **Files**, **USB**, **WiFi**, **Bluetooth**, **Status**, and **About**. Three icons are visible at a time; About is an inactive placeholder. WiFi scans access points; Bluetooth scans nearby BLE advertisements; Status shows WiFi connection details and hardware addresses.
-- Universal **G0** button returns to the launcher.
-- Automatic SD card mount at boot using the Cardputer Adv's SPI SD connection.
-- Browse SD directories, open a basic text preview, create folders, rename entries, delete files or **empty** directories with confirmation.
-- SD capacity/used-space information under Files > Disk.
-- Missing-SD handling and a retry key. The home screen checks card presence about every 2.5 seconds using a raw sector read when mounted, rather than unmounting and remounting each time. When missing, it periodically retries mounting. Files and R also retry.
+M5Knife combines an SD card file manager, USB card reader, Wi-Fi and network tools, Bluetooth scanning, infrared remotes and system information in a small keyboard-driven launcher. It also runs an HTTP file manager that can be reached over an existing Wi-Fi network or directly from a phone using the Cardputer's own hotspot.
 
-**Not implemented yet:** FAT32 formatting; scrolling text viewer; recursive copy/move. USB Mass Storage has an initial experimental implementation using raw SD sectors and ESP32-S3 native USB OTG; it is NOT hardware validated. Back up the card before testing. Windows must safely eject it (or USB must disconnect) before using G0 to leave USB mode. Do not open Files while USB MSC is active.
+This is the **M5Stack Cardputer Adv** project, not the separate Cardputer CP/M firmware.
 
-## Keyboard
+## Contents
 
-- Main launcher: `A` / `D` (or Fn + left/right arrows) moves horizontally across all six icons; Enter opens Files or USB. About does nothing yet; Status shows network details. WiFi and Bluetooth open scan results.
-- Files: `W` / `S` (or Fn + up/down) scrolls; Enter opens; `B` goes up; `N` creates folder; `E` renames; `X` deletes (confirmation); `M` opens disk operations; `R` retries SD mount / refreshes.
-- File preview: `B` backs out (preview currently shows beginning of file only).
-- G0: returns to the main launcher from **any** screen; while USB MSC is active, first eject the drive in Windows or physically disconnect USB to reduce corruption risk.
+- [Getting started](#getting-started)
+- [Keyboard controls](#keyboard-controls)
+- [Launcher and tools](#launcher-and-tools)
+- [HTTP file manager and hotspot](#http-file-manager-and-hotspot)
+- [Infrared remote library](#infrared-remote-library)
+- [Configuration and NVS](#configuration-and-nvs)
+- [Troubleshooting](#troubleshooting)
+- [Safety and current limitations](#safety-and-current-limitations)
 
-## PlatformIO — Windows PowerShell
+## Getting started
 
-1. Extract this folder to your preferred PlatformIO projects directory.
-2. Open the `M5Knife` folder in VS Code (File > Open Folder).
-3. Insert an SD card (preferably FAT32, backed up) in the Cardputer Adv.
-4. Connect the Cardputer Adv to your PC by USB.
-5. In VS Code choose Terminal > New Terminal. Run:
+### Requirements
+
+- M5Stack **Cardputer Adv** with USB connection.
+- A PC with **Visual Studio Code**, **PlatformIO**, and Git installed.
+- A microSD card, preferably formatted FAT32, for file operations, HTTP file serving and USB Mass Storage. **Back up its contents first.** Basic launcher, settings, Wi-Fi, Bluetooth, Status and IR profile selection do not require the SD card.
+- The firmware source from [ReconditeBox/M5Knife](https://github.com/ReconditeBox/M5Knife).
+
+This project uses PlatformIO environment `m5stack-cardputer-adv`, Espressif32 `6.7.0`, Arduino, and the `esp32-s3-devkitc-1` board definition. Dependency versions are pinned in `platformio.ini`.
+
+### Build and upload (Windows PowerShell)
+
+If you don't have the repository locally yet, open **PowerShell**, go to the directory where you keep your PlatformIO projects, then clone it:
+
+```powershell
+git clone https://github.com/ReconditeBox/M5Knife.git
+cd M5Knife
+```
+
+If you already have M5Knife locally, open PowerShell **in that project folder** and update the stable branch:
+
+```powershell
+git switch main
+git pull origin main
+```
+
+Compile:
 
 ```powershell
 & "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e m5stack-cardputer-adv
-& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e m5stack-cardputer-adv -t upload
 ```
 
-For serial logs, close any other serial monitor and run (adjust COM port):
+Connect the Cardputer by USB, then upload (replace `COM3` if your device uses a different port):
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e m5stack-cardputer-adv -t upload --upload-port COM3
+```
+
+To open a 115200 baud serial monitor:
 
 ```powershell
 & "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" device monitor -b 115200 -p COM3
 ```
 
-Dependency versions are pinned to avoid unexpectedly pulling newer M5GFX releases. The first compile downloads dependencies. Hardware testing is required: this code is an initial scaffold and has not yet been compiled/flashed on the device in this environment.
+If you need to find the COM port, open **Windows Device Manager → Ports (COM & LPT)**. Close the serial monitor before uploading. USB MSC uses the ESP32-S3's native USB mode, which may change enumeration and available serial ports; use the device's download/BOOT mode if normal upload fails.
 
-## Safety
+## Keyboard controls
 
-- Always back up a microSD card before testing filesystem operations.
-- Deleting a file and renaming are real operations; formatting and MSC are *not* active.
-- G0 exits current UI screens; it cannot cancel a synchronous SD write in progress.
-- USB MSC is experimental; test with a disposable FAT32 card, never the only copy of valuable data.
-- The build now uses native USB OTG mode (`ARDUINO_USB_MODE=0` and `ARDUINO_USB_CDC_ON_BOOT=0`). This can change serial monitor and upload behaviour. If normal upload fails, use the ESP32-S3 download/BOOT mode and the correct serial port.
+M5Knife's launcher displays **three tiles at a time** and scrolls horizontally through all nine tools.
 
-## If changing from an older copy
+| Key | Action |
+| --- | --- |
+| `A` / `D` | Move left / right on the launcher |
+| `W` / `S` | Move up / down in menus and lists |
+| `Fn + ,` / `Fn + /` | Left / right cursor keys |
+| `Fn + ;` / `Fn + .` | Up / down cursor keys |
+| `Enter` | Select, open, or activate |
+| `B` | Back in most menus |
+| `Fn + \`` | Escape/cancel in input and editor screens |
+| **G0** | Return to the main launcher; USB mode protects against unsafe exit |
+| `R` | Refresh where offered |
 
-Delete the old `M5Knife` folder or extract this as a new project. If you reuse the same folder, remove `.pio/libdeps` and `.pio/build` before compiling so PlatformIO does not keep the previously downloaded M5GFX library.
+**Fn is the Cardputer's `Aa` key.** The keys shown in the footer of each screen take precedence over these general shortcuts.
 
-## USB and hot-swap testing (experimental)
+## Launcher and tools
 
-This version registers USB MSC when the firmware boots so Windows can enumerate an already-connected Cardputer. The disk is presented only while the USB icon is active. Use a disposable SD card, ideally inserted before power-on. Enter USB mode, then in Windows check **Device Manager** and **Disk Management**: a drive letter will only appear for media Windows can read. Safely eject the disk before G0.
+| Tool | What it does |
+| --- | --- |
+| **Files** | Browse SD files and directories; view, search and edit small text files; create, rename and delete entries |
+| **USB** | Expose the SD card as a USB Mass Storage device to a connected computer |
+| **WiFi** | Scan and connect to wireless networks; save credentials for later use |
+| **Network** | Network information, DNS lookup, ICMP ping, TCP port scan, LAN scanner, HTTP server and hotspot |
+| **Bluetooth** | Scan nearby Bluetooth Low Energy advertisements |
+| **Infrared** | NEC manual transmission and a saved NEC/Samsung remote library |
+| **Settings** | Wi-Fi autoconnect, NTP, timezone, brightness, sleep, NVS save and SD configuration import/export |
+| **Status** | Wi-Fi, hardware addresses, SD space, heap, battery and clock |
+| **About** | Firmware and device information |
 
-**Known limitation:** the USB logical-unit capacity is established at firmware boot. A card inserted after boot may be detected by Files, but the USB logical unit cannot automatically resize for a different card. Reboot with the intended card inserted before testing USB. Windows may also cache device/media state; disconnecting/reconnecting USB after entering USB mode may be necessary. This implementation remains unverified on physical Cardputer Adv hardware. USB MSC must not be used with valuable data until its enumeration and write paths are validated.
+### Files and built-in text editor
 
-## USB diagnostics
+The **Files** screen lists directories before files. Navigate with W/S and open with Enter.
 
-The USB screen now reports whether MSC registration succeeded, whether the USB device stack started, whether a USB host mounted the device, and the SD logical-sector count. These are *diagnostics*, not proof of a working removable drive. If Windows cannot see a drive, check Device Manager as well as Disk Management; do not initialise or format an unexpected drive. USB Mass Storage remains experimental.
+| Key | Files action |
+| --- | --- |
+| `B` | Go to parent directory |
+| `N` | Create a directory |
+| `T` | Create a blank text file |
+| `E` | Rename selected file or directory |
+| `X` | Delete selected file or **empty** directory, with confirmation |
+| `M` | Open SD disk information / format menu |
+| `R` | Refresh or retry mounting SD |
 
-## Display behaviour
+Opening a file loads the built-in text viewer; the maximum file size is **8 KiB**. In the viewer, W/S scroll, F finds text and E switches to the editor. In edit mode, use cursor keys, Del and Enter to change text; **Fn+S** saves. Use **Fn+\`** to exit the viewer/editor. Files larger than 8 KiB are not supported by this viewer. Carriage returns are removed when text is loaded, so saving can change CRLF line endings to LF: do not use the editor on files whose exact bytes must be preserved.
 
-The launcher redraw optimisation has been reverted pending USB regression testing. Navigation may flicker until a safer rendering change is implemented.
+Saves use a temporary file and a backup/rename sequence. The disk menu reports SD capacity and usage. **SD formatting is displayed but deliberately disabled.** Recursive copying/moving files or directories is not implemented.
 
-## WiFi and Bluetooth scanners (feature branch)
+### USB Mass Storage
 
-- **WiFi** runs an access-point scan and lists SSID, signal strength (dBm), and whether the AP is secured (`*`); hidden networks appear as `<hidden>`. It does not connect.
-- **Bluetooth** scans **Bluetooth Low Energy (BLE)** advertisements for four seconds and lists names or addresses with signal strength. ESP32-S3 does not support Bluetooth Classic discovery.
-- Press `W`/`S` to scroll, `R` to rescan, `B` or G0 to return home. Scans are currently synchronous; G0 cannot interrupt the few seconds while a scan is underway.
-- Neither scanner pairs, connects or writes files. USB MSC implementation is unchanged on this branch.
+Open **USB** to present the microSD card to a USB-connected computer. While the computer has the card, M5Knife does not simultaneously use the FAT filesystem.
 
-## Status screen
+**In Windows, safely eject the drive before pressing G0.** The USB screen reports connection state and read/write/error timing diagnostics; G0 is intentionally restricted if the host still has the media mounted or is writing. If the drive does not appear promptly, check Windows Disk Management and try disconnecting/reconnecting the USB cable as appropriate. For the most reliable USB media capacity detection, insert the intended card before starting the firmware.
 
-Shows the WiFi SSID and IPv4 address only when connected (otherwise `Not connected`), plus the WiFi station MAC address and Bluetooth controller MAC address. `R` refreshes the values, `B` or G0 returns to the launcher. Viewing Status does not connect to WiFi or pair with Bluetooth.
+Never unplug the card, write to it from both sides or use your only copy of important data during USB tests.
 
-## USB MSC performance diagnostics (test branch)
+### Wi-Fi
 
-This isolated branch instruments the raw SD read/write callbacks without changing their transfer logic. The USB screen shows total reads/writes, failed requests, count of callbacks taking >=100ms, and maximum read/write callback time in milliseconds. Press `R` to refresh counters. Use a **spare** SD card and test Windows detection only; do not run format, repair, or write-speed tests until the results are inspected. G0 still requires host ejection or disconnection. These diagnostics are not validated by a local compile; do not merge until hardware testing confirms that build and USB access work.
+Open **WiFi** to scan networks. Select a network and press Enter to connect; enter a password if required.
 
-## USB attachment timing experiment
+- `P`: save the connected network's credentials to NVS.
+- `L`: connect to the highlighted network using saved credentials, if available.
+- `D`: disconnect.
+- `R`: rescan.
 
-The `fix/usb-msc-performance` branch now **electrically detaches the USB device after the USB stack starts**. Selecting USB checks that the SD card is ready, sets MSC media-present, and then calls TinyUSB `tud_connect()` to advertise a ready drive to Windows. After Windows safe-eject (or USB disconnection), G0 calls `tud_disconnect()` before withdrawing media. This is an experimental change; initial USB enumeration during device boot and Windows driver caching may still influence timing. The USB callback latency counters remain on-screen; press `R` to refresh them. Test on a disposable card and do not merge into `main` until Windows recognises storage quickly, Explorer remains responsive, file reads work, and safe ejection works. 
+Up to **16 network credential records** can be stored in the unified configuration. With **Auto WiFi** enabled in Settings, startup tries the first saved network. Credentials are retained in NVS even without an SD card.
 
-## WiFi connection (feature branch)
+### Network utilities
 
-In WiFi, scan networks and highlight an SSID using W/S. Enter selects it; an encrypted network prompts for a password (input displayed as entered, without masking), while an open network connects immediately. Enter submits the password, Fn+backtick cancels, R rescans, and D disconnects. The connection attempt is asynchronous with an 18-second timeout and can be cancelled with G0. Status reports the SSID and IPv4 address once connected. WiFi passwords are not saved by the toolkit; the ESP32 WiFi system may persist configuration according to its framework settings. Hidden SSIDs and enterprise WiFi are not supported in this version. This feature has not yet been compile-tested or hardware-tested. USB MSC and SD code are unchanged.
+The **Network** menu provides:
 
-## WiFi credentials on SD (experimental)
+- **Network info:** IP address, gateway, subnet mask, DNS, MAC, SSID and signal strength.
+- **DNS lookup:** resolve a hostname to an IPv4 address.
+- **Ping:** send three ICMP echo requests.
+- **TCP port scan:** test a fixed set of common ports on a selected host.
+- **LAN scanner:** test a range of up to 256 IPv4 addresses and list hosts that respond on the scanner's tested TCP ports.
+- **HTTP File Server** and **HTTP Hotspot:** described below.
 
-The `[WIFI]` section of `/M5KNIFE.CFG` holds up to 16 network credentials as unencrypted plaintext, using numbered pairs and blank lines between networks:
+DNS, ping and scanning need a normal Wi-Fi connection. The LAN scanner is **TCP-based**, not a full device-discovery or ICMP scanner: a host with no open tested ports may not appear. Scan only networks and devices you are authorised to test.
+
+### Bluetooth
+
+**Bluetooth** scans nearby **BLE advertisements** and displays discovered devices, their advertised names (where available) and signal levels. This is a scanner, not a Bluetooth terminal or pairing manager.
+
+### Settings, Status and About
+
+**Settings** offers Auto WiFi, NTP sync, UTC offset, brightness, sleep timeout (including **Never**, the default), Save settings, Sync time now, and configuration Import/Export. Select a row using W/S; use A/D or Enter to change/activate it. Choose **Save settings** to persist manual settings changes in NVS.
+
+**Status** is scrollable and reports connected Wi-Fi and IP, Wi-Fi/Bluetooth MAC addresses, SD total/used/free space, current/minimum/total heap, battery percentage/voltage and local clock. **About** identifies the firmware, version and hardware.
+
+## HTTP file manager and hotspot
+
+From **Network**, choose one of these:
+
+| Mode | Behaviour |
+| --- | --- |
+| **HTTP File Server** | Serves the SD card using the existing Wi-Fi connection. If not connected, starts its own hotspot instead. |
+| **HTTP Hotspot** | Explicitly starts a standalone wireless network, even if the Cardputer had been connected to a router. The station connection is temporarily dropped. |
+
+The browser interface has a **folder tree and file list** and supports uploads, downloads, creating directories, renaming entries, and deleting files or empty directories. It can display supported text and media types in the browser. Unrecognised or unsafe-to-render types are downloaded instead. **Browser-based text editing is not yet implemented.** Uploads do not silently overwrite files with the same name.
+
+The server listens on **HTTP port 80** and runs only while its HTTP screen is open. Press **B** or **G0** to stop it; when M5Knife created a hotspot, the hotspot stops too.
+
+### Connect using an existing Wi-Fi network
+
+1. Connect the Cardputer to Wi-Fi.
+2. Open **Network → HTTP File Server**.
+3. On a phone or computer that can reach the Cardputer, visit the **`http://` URL shown on the screen**.
+4. Sign in with the displayed HTTP credentials.
+5. Press **Q** or **Enter** on the Cardputer to show the URL QR code; repeat to return to status.
+
+### Connect directly using the M5Knife hotspot
+
+Default values (customisable through `[HOTSPOT]` and `[HTTPD]`):
+
+| Setting | Default |
+| --- | --- |
+| Hotspot SSID | `M5Knife` |
+| Hotspot Wi-Fi password | `M5Knife1234` |
+| Typical hotspot URL | `http://192.168.4.1/` |
+| HTTP username | `m5knife` |
+| HTTP password | `1234` |
+
+1. Open **Network → HTTP Hotspot** (requires the SD card).
+2. Join the **M5Knife** Wi-Fi network from the phone or computer.
+3. Open the exact **`http://` address shown on the Cardputer** and sign in.
+4. Use **Q** or **Enter** to cycle between **status → join-Wi-Fi QR → server-URL QR → status**.
+5. Press **B** or **G0** on the Cardputer to stop the server and hotspot.
+
+The hotspot offers **local access only, not Internet access**. Some phones will prefer mobile data when connected to Wi-Fi without Internet. If the page will not load, temporarily **turn off mobile data**, stay connected to the M5Knife Wi-Fi network and explicitly browse to **`http://192.168.4.1/`** (not HTTPS). This was necessary during phone testing of the hotspot.
+
+**Security:** HTTP Basic credentials and file transfers use **unencrypted HTTP**, and default credentials are publicly documented. Change the defaults for your own setup, do not expose port 80 to the Internet, and use only trusted devices and networks.
+
+## Infrared remote library
+
+M5Knife transmits IR through the Cardputer Adv's built-in emitter on **GPIO 44**.
+
+**Infrared** provides **Manual transmit** (NEC address and command in hex), **Remote control** (six configurable buttons) and **Remote library**. The supported saved-profile protocols are **NEC** and **Samsung**.
+
+The library accepts **up to eight profiles**, including the original `[REMOTE]` format as profile slot 1. Other slots use `[REMOTE2]` through `[REMOTE8]`. A `[REMOTE1]` section can be used in place of `[REMOTE]`. Choose a remote using W/S and Enter in **Infrared → Remote library**, or press **L** from the remote-control screen. The active profile is marked with an asterisk and saved in **NVS**, so it is restored after restart without an SD card.
+
+The remote-control buttons are `POWER`, `VOLUP`, `VOLDOWN`, `CHUP`, `CHDOWN` and `MUTE`; missing commands display as **(unset)**. NEC uses a 16-bit address and 8-bit command. Samsung32 codes use the conventional MSB-first form: `E0E040BF` corresponds to address `0xE0E0` and command `0x40`.
+
+To **add or modify** profiles, edit the configuration text file and import it using **Settings → Import config from SD**. At present, the Cardputer keypad supports **selecting** saved profiles, not authoring new ones. IR receiving/learning would need separate receiver hardware and is not implemented.
+
+## Configuration and NVS
+
+**ESP32-S3 NVS flash is the primary configuration store.** It keeps settings, saved Wi-Fi credentials, HTTP login, hotspot options and infrared profiles. The microSD root file **`/M5KNIFE.CFG`** is an **optional human-readable import/export copy**, not a requirement for ordinary startup.
+
+On first startup without valid NVS configuration, M5Knife tries to import `/M5KNIFE.CFG` if present; otherwise it creates default configuration in NVS. In **Settings**:
+
+- **Save settings** writes the current on-screen settings to NVS.
+- **Export config to SD** writes the current NVS-backed configuration to `/M5KNIFE.CFG`, using a temporary file and backup during replacement.
+- **Import config from SD** replaces the NVS configuration from the SD file and reloads settings and IR profiles. **Back up your working configuration before importing.**
+
+The import file must contain at least `[SETTINGS]` and `[HTTPD]` and cannot exceed **16 KiB**. Other sections are optional. Network passwords and HTTP login details are stored **in plaintext**, both in the exported file and in this firmware's NVS contents. Avoid publishing a real configuration file.
+
+### Example M5KNIFE.CFG
+
+The codes and wireless details below are **examples**, not working credentials or guaranteed IR commands for your equipment.
 
 ```ini
-SSID1=MyNetwork
-PASS1=MyPassword
+[SETTINGS]
+AUTO_WIFI=1
+NTP=1
+TZ_HOURS=0
+BRIGHTNESS=128
+SLEEP_MIN=0
 
-SSID2=Guest Network
-PASS2=another-password
-```
+[WIFI]
+SSID1=ExampleNetwork
+PASS1=replace-with-real-password
 
-From the WiFi scan screen, highlight a network and press **L** to load that network's saved credentials and connect. Press **P** after successfully connecting with an entered password to add the network or update its existing password. Other stored networks are retained; the file is rewritten with consecutive numbers. **D** disconnects; **R** rescans. SSID/password values retain spaces, punctuation and equals signs. An SD card containing credentials must be kept secure: all passwords are readable by anyone who obtains the card or accesses it through USB MSC. Never use SD filesystem operations while USB MSC owns the card. This branch requires compilation and hardware testing.
+[HTTPD]
+USERNAME=m5knife
+PASSWORD=replace-this-default
 
-## Infrared transmitter and remote library (0.5.14 development)
+[HOTSPOT]
+SSID=M5Knife
+PASSWORD=M5Knife1234
 
-The Cardputer Adv built-in IR emitter (GPIO 44) transmits **NEC** and **Samsung** remote control codes. **Infrared → Manual transmit** accepts a NEC address (A) and command (C), in hexadecimal, then Enter transmits. **Infrared → Remote control** provides six buttons: POWER, VOLUP, VOLDOWN, CHUP, CHDOWN and MUTE. Unset buttons cannot be transmitted.
-
-### Remote library
-
-The **Infrared → Remote library** screen lists up to **eight saved remotes**, displaying the selected remote with an asterisk. Use W/S to choose, Enter to activate a profile, and B to return. Press **L** while using Remote control to open the library. The chosen profile is stored in ESP32-S3 **NVS** and automatically restored on future boots **with or without an SD card**. The first valid profile becomes active if the saved slot is not present.
-
-All profiles are maintained in the same NVS-backed unified configuration used by other M5Knife settings. To add or edit profiles, choose **Settings → Export config to SD**, edit `/M5KNIFE.CFG` on your computer, then choose **Settings → Import config from SD**. Existing profile data in the original `[REMOTE]` section remains supported and is treated as slot 1. Additional profiles use `[REMOTE2]` through `[REMOTE8]`; `[REMOTE1]` is also recognised as a slot-1 alternative. The optional `[IR_LIBRARY]` section records which numbered slot should be active. Selecting a remote in the library updates `[IR_LIBRARY]` in NVS automatically, without requiring an SD card.
-
-Example configuration sections (illustrative commands only; check codes for your devices):
-
-```ini
 [REMOTE]
-NAME=Samsung TV
+NAME=Example Samsung TV
 PROTOCOL=SAMSUNG
 ADDRESS=0xE0E0
 POWER=0x40
@@ -129,7 +261,7 @@ CHDOWN=0x08
 MUTE=0xF0
 
 [REMOTE2]
-NAME=Bedroom TV
+NAME=Example NEC remote
 PROTOCOL=NEC
 ADDRESS=0x00FF
 POWER=0x02
@@ -140,135 +272,42 @@ CHDOWN=0xC2
 MUTE=0xE2
 
 [IR_LIBRARY]
-SLOT=2
+SLOT=1
 ```
 
-The values use a **16-bit address** and **8-bit commands**. Samsung32 uses conventional MSB-first notation: for example, full 32-bit code `E0E040BF` corresponds to `ADDRESS=0xE0E0` and `POWER=0x40` (the low byte is the complement of the command). NEC uses the IRremote NEC address/command API. Profile names are limited to 32 display characters. Missing/invalid protocol or address prevents that profile from appearing in the library; missing individual button commands are shown as **(unset)**.
+Additional Wi-Fi records use `SSID2`/`PASS2`, etc., up to 16. Additional remote sections run through `[REMOTE8]`. `[IR_LIBRARY]` records the selected slot; normally the firmware updates it when you select a profile.
 
-**Not included:** IR receiving/learning, creating or editing profiles using only the Cardputer keyboard, and support for protocols other than NEC and Samsung. IR receiving would require suitable external hardware. Use the IR transmitter only with equipment you are authorised to control.
+Hotspot SSIDs must be **1–32 bytes** and their WPA2 passwords **8–63 bytes**. If the `[HOTSPOT]` section is omitted, the default SSID and password are used.
 
-This feature is on the `feature/ir-remote-library` branch and needs compilation and physical Cardputer testing before merging to `main`. The stable baseline remains **0.5.13**.
+## Troubleshooting
 
-## Network tools (experimental)
+| Symptom | What to check |
+| --- | --- |
+| Build or upload fails | Open PowerShell inside the correct project; select the `m5stack-cardputer-adv` environment; verify the COM port and that no serial monitor is using it. |
+| SD card is missing | Reseat a FAT32 card; from Files use `R` to retry mounting; check the top-bar SD icon. |
+| Windows cannot see the USB disk | Enter **USB** mode, check Disk Management, then try USB reconnection. Make sure the correct SD card was present at boot. |
+| Cannot leave USB mode | Safely eject the drive in Windows (or disconnect the USB host); then use G0. |
+| Hotspot joins but webpage will not load | Stay connected despite the no-Internet warning, disable the phone's mobile data temporarily, and enter `http://192.168.4.1/` explicitly. |
+| Browser requests an unexpected password | HTTP username/password are **separate** from the hotspot's Wi-Fi password; check `[HTTPD]` or the HTTP status screen. |
+| IR remote missing after import | Check `[REMOTE]` / `[REMOTE2]` etc., including a valid `PROTOCOL` and hexadecimal `ADDRESS`, then import the complete SD configuration. |
+| Settings do not survive reboot | Choose **Save settings**. A full flash erase or changed NVS partition can remove stored configuration; ordinary firmware uploads should not. |
 
-The launcher now has **Network** immediately after WiFi. WiFi remains responsible for connecting/disconnecting and managing `M5KNIFE.CFG`; Network provides **Network information** (IPv4 address, gateway, netmask, DNS, WiFi MAC, SSID, signal strength), **DNS lookup** (hostname to IPv4) and **Ping host** (three ICMP echo requests, timing or timeout). Use W/S and Enter to choose, type the hostname/IP address in the input screen, Enter to run, Fn+backtick to cancel and G0 for Home. Network tools require WiFi connectivity. Ping uses a raw ICMP socket and may be blocked by a destination or network firewall. This branch is not yet compiled or hardware-tested; the tested `main` version remains unchanged.
+## Safety and current limitations
 
-### Network tools — stage two (experimental)
+- **Back up the SD card.** Rename, delete, editing, HTTP upload and USB MSC are real write operations.
+- Do **not** use the SD card from the Cardputer and a USB host simultaneously. Eject before leaving USB mode.
+- SD **formatting is not enabled**. Files copy/move, browser-based text editing, and mDNS (`m5knife.local`) are not yet implemented.
+- The on-device text viewer/editor is limited to **8 KiB** and may normalise line endings.
+- The IR library transmits NEC/Samsung commands; it does **not** learn IR signals.
+- BLE scanning does not implement Bluetooth pairing or data connections.
+- Network tools are intended for your own equipment and authorised networks.
+- The hotspot has no Internet uplink, and its web server is **HTTP, not HTTPS**.
+- M5Knife is developed and tested for the **Cardputer Adv**. Different devices, SD cards, phone browsers and USB hosts may behave differently.
 
-- **TCP port scan**: enter a host; check 12 common TCP ports and report only those accepting connections.
-- **LAN scanner**: edit an inclusive range in the form `192.168.1.1-192.168.1.254`. The default is derived from WiFi's local address and subnet mask (bounded to at most 256 IP addresses). Lists only hosts answering TCP connection attempts and their open ports (21,22,23,53,80,139,443,445,3389,8080). W/S scrolls result lines. Other hosts, including devices that block TCP connections, are not detectable with this method. A full /24 range can take a while to scan.
-- **TCP client**: removed for now.
+## Project layout
 
-Use only on networks and devices you are authorised to inspect. This revision is not yet compiled or hardware-tested. Tested `main` remains unchanged.
+- `src/main.cpp` — firmware, launcher and built-in tools.
+- `platformio.ini` — board/platform configuration, USB build flags and pinned dependencies.
+- `README.md` — current user guide.
 
-## Scrollable Status metrics (experimental)
-
-The Status screen shows WiFi SSID and IPv4, WiFi/Bluetooth MAC addresses, SD total/used/free capacity in MiB, ESP32 heap size/free/minimum-free values in KiB, and the Cardputer battery percentage and voltage. W/S (or the keyboard's up/down keys) scroll through seven visible rows; R refreshes readings; B or G0 returns home. SD usage may take time to calculate depending on card contents. This branch has not yet been compiled or tested on the Cardputer Adv; `main` is unchanged.
-
-## High-priority tools (experimental branch)
-
-- **WiFi auto-connect:** At startup, if `AUTO_WIFI=1`, M5Knife attempts to connect to the first saved network in `/M5KNIFE.CFG` [WIFI] section without interrupting the launcher. Disable under Settings if unwanted. The saved WiFi profiles are still maintained in the existing WiFi menu.
-- **NTP clock:** Once WiFi connects, synchronises using pool.ntp.org/time.google.com if enabled. The synchronised local date/time appears near the bottom of the scrollable Status page. Settings provides a whole-hour UTC offset; daylight-saving changes are not automatic.
-- **Settings:** A ninth launcher tile opens settings for WiFi auto-connect, NTP sync, UTC offset, display brightness and display sleep timeout. W/S selects a row; A/D changes values. Choose **Save settings** to write `/M5KNIFE.CFG` on the SD card. Sleep turns display brightness off after inactivity; the keyboard or G0 wakes it. SD is required for persistence.
-- **Text viewer:** Files now opens a RAM-backed 8 KiB maximum text viewer. W/S scroll, F searches text, E enters editor, Fn+Escape returns to Files.
-- **Text editor:** The editor supports typing, deleting before the cursor, newline insertion, cursor navigation via Fn+cursor keys, and save using Fn+S. Edited files are saved using temporary/backup files. Unsaved changes block the normal editor exit; G0 can leave without saving. Edit only plain text files up to 8192 bytes. In Files, T creates a blank text file in the current directory, after which it can be opened and edited. This is a deliberately basic first version.
-
-This branch is **not yet compiled or hardware-tested**. Stable `main` remains at M5Knife 0.4.5 until test results are confirmed.
-
-## HTTP File Server (experimental)
-
-Open **Network > HTTP File Server** after connecting to WiFi and inserting an SD card. The Cardputer shows a local `http://<device-ip>/` URL and the username `m5knife` plus a newly generated eight-digit password for that session. Open the address in a browser on the same local network; authenticate using those credentials. HTTP uses TCP port 80.
-
-The web interface supports navigating SD folders, downloading files, uploading new files, creating folders, renaming items and deleting files or **empty** folders. Uploads do **not** overwrite existing files. File paths are checked to reject relative directory traversal and malformed names. The SD capacity and usage appear on the browser page.
-
-The server is started **only** in HTTP File Server mode, stopped with B or G0, and stopped if WiFi disconnects. USB mass storage remains a separate screen/mode and is not entered while HTTP File Server owns the SD filesystem.
-
-**Security:** This is HTTP, **not HTTPS**. The password is transmitted using HTTP Basic authentication and is not encrypted on the network. Only use this mode on trusted local networks, never expose port 80 to the internet or forward it through your router. Anyone with the login information and network access can read, change and delete SD files; keep backups. There is no guest/read-only role.
-
-This branch is not yet compiled or hardware-tested. Stable `main` is unchanged at M5Knife 0.4.6.
-
-### Two-pane web file manager (Stage 1)
-
-The browser interface now has a dark M5Knife-style header, an SD usage bar, a **collapsible folder tree** at left and a **file list** for the current directory at right. Click a triangle to expand/collapse a branch, or click its name to open it. Branch contents load on demand using `GET /tree?dir=...`; the server returns only directories in JSON. The current folder is highlighted in the tree, with its path displayed above the list. The Refresh button reloads the page.
-
-Existing upload, download, rename, delete and new-folder actions remain on the page. The file table shows name and size; modified timestamps are deliberately omitted pending reliable SD timestamp support. The browser page and file listing currently have a per-directory display cap (256 entries; folder branches 128), and large directories may use significant ESP32 memory when building the HTML page. Password credentials are unchanged (username `m5knife`, password `1234`). This experimental UI has not been compiled or hardware-tested yet.
-
-### Browser file previews (development)
-
-In the HTTP file manager, clicking a recognised file opens it in a browser tab with its appropriate MIME type: plain text/source files, CSV, JSON, PNG/JPEG/GIF/WebP/BMP/ICO images, PDF, MP3/WAV/OGG audio, and MP4/WebM video. The **Download** link still forces a download. Unrecognised or potentially active content (HTML, SVG, JavaScript) is downloaded instead of executed from the Cardputer server. The change retains HTTP Basic authentication (`m5knife` / `1234`) and has not yet been build- or hardware-tested.
-
-### Unified SD configuration (v0.4.9 development)
-
-The firmware uses one SD-card file, `/M5KNIFE.CFG`, split into `[SETTINGS]`, `[WIFI]`, `[REMOTE]`, and `[HTTPD]` sections. It no longer reads or migrates separate configuration files. Section updates preserve the other sections; an intermediate temporary file and backup are used when updating the configuration.
-
-Example (replace with your own values; IR button names match the existing profile):
-```ini
-[SETTINGS]
-AUTO_WIFI=1
-NTP=1
-BRIGHTNESS=128
-SLEEP_MIN=0
-TZ_HOURS=0
-
-[WIFI]
-SSID1=MyNetwork
-PASS1=MyPassword
-
-[REMOTE]
-NAME=My remote
-PROTOCOL=NEC
-ADDRESS=00FF
-POWER=45
-VOLUP=46
-VOLDOWN=47
-CHUP=48
-CHDOWN=49
-MUTE=4A
-
-[HTTPD]
-USERNAME=m5knife
-PASSWORD=1234
-```
-
-**SLEEP_MIN=0 means never sleep**, and is the default. Set `USERNAME` and `PASSWORD` in the `[HTTPD]` section to change HTTP Basic login; if omitted, defaults remain `m5knife` / `1234`. The password is stored in plaintext on the SD card and transmitted over unencrypted HTTP; use only on a trusted network. Stop HTTPD before editing its configuration, and restart the Cardputer to load changes. This revision needs compilation and on-device testing before merge.
-
-### M5Knife 0.5.11 development: NVS settings with SD import/export
-
-The ESP32-S3's internal non-volatile flash (NVS, via Preferences) is now the **primary** configuration store. Boot reads NVS without needing an SD card. If no saved NVS configuration exists yet, the firmware imports `/M5KNIFE.CFG` from the SD card once; otherwise it initializes built-in defaults (including `SLEEP_MIN=0`, meaning Never). Subsequent boots do not automatically overwrite NVS from SD. Routine Settings and Wi-Fi saves write to NVS and retain other configuration sections; infrared profiles and HTTPD credentials are also read from NVS.
-
-Two Settings menu actions manage the same human-editable INI-style file: **Import config from SD** (replaces NVS configuration from `/M5KNIFE.CFG`) and **Export config to SD** (writes current NVS configuration to that file). Import checks file size and required sections before writing; take a backup before experimenting. Export uses a temporary file and backup during updates. The firmware does not erase the NVS partition on normal firmware upload; a full-flash erase or repartitioning can remove settings. NVS contains plaintext Wi-Fi and HTTPD credentials and is not encrypted by this firmware.
-
-This is a development branch, version **0.5.11**, not yet compiled or hardware-tested. Stable `main` remains **0.4.9**.
-
-### HTTP File Server QR code (development branch)
-
-While the HTTP File Server is running under **Network → HTTP File Server**, press **Q** (or **Enter**) to show a QR code containing the current `http://<Cardputer-LAN-IP>` URL. Scan it with a phone on the same reachable network to open the existing browser-based file manager. Press **Q** or **Enter** again to return to the address/credentials/status display. Press **B** or **G0** to stop the HTTP server; showing the QR code does **not** stop serving web requests. **R** refreshes whichever HTTP display is showing.
-
-The QR code uses the QR renderer already in M5GFX, with a white border for scanning on the Cardputer's small screen. HTTP Basic authentication still applies; the QR code holds only the server URL, not the username or password. Keep the server on a trusted network. No additional library dependency is needed.
-
-The HTTP QR-code view has been accepted as working on the Cardputer for M5Knife 0.5.12.
-
-## Wi-Fi hotspot and HTTP file server — 0.5.13 development
-
-The **Network** menu now has two HTTP options:
-
-- **HTTP File Server:** Keeps the existing router-connected mode if Wi-Fi is already connected. If not connected, starts a temporary hotspot automatically.
-- **HTTP Hotspot:** Explicitly creates a hotspot even if the Cardputer was connected to a router. This temporarily disconnects the station connection; the normal auto-connect attempt resumes when the hotspot closes.
-
-The Cardputer hotspot is a password-protected Wi-Fi access point. Defaults are **SSID: `M5Knife`**, **Wi-Fi password: `M5Knife1234`**. These are separate from the HTTP Basic authentication credentials (still `m5knife` / `1234` unless changed under `[HTTPD]`). The Cardputer shows its current IP/URL and both sets of credentials. Join its Wi-Fi network from a phone or computer, then open the displayed `http://...` address; the typical default hotspot address is `http://192.168.4.1`. Your device might warn that the hotspot has no Internet access; choose to remain connected.
-
-Within HTTPD, press **Q** or **Enter** to cycle between the normal status screen, a **join Wi-Fi QR code** and a **file-server URL QR code** while hotspot mode is running. In normal router mode, Q switches between status and the URL QR code. The HTTP server continues handling requests while QR codes are shown. **B** or **G0** stops the web server and its own hotspot. This does not erase NVS or change Wi-Fi profiles.
-
-Optional custom hotspot credentials can be specified in the existing NVS-backed `/M5KNIFE.CFG` import/export format:
-
-```ini
-[HOTSPOT]
-SSID=M5Knife
-PASSWORD=M5Knife1234
-```
-
-The SSID must be 1–32 bytes, and the WPA2 password 8–63 bytes. Change the SD file, then use **Settings → Import config from SD** (or reboot after a fresh NVS initialization) to load it; changes take effect the next time HTTPD starts. The `[HOTSPOT]` section is optional and built-in defaults are used otherwise. Settings exported from existing NVS without this section still work.
-
-The hotspot provides a local connection to M5Knife, not Internet access. The HTTP file manager remains fully read/write, and the protocol is **plain HTTP**, so use only with devices you trust. For security, consider setting distinct private HTTP credentials through `[HTTPD]`.
-
-**This feature is on `feature/wifi-hotspot` for compile and physical testing. Stable `main` remains M5Knife 0.5.12 until testing and approval.**
+Changes are normally developed on separate branches, tested on Cardputer hardware and merged into `main` after approval.
