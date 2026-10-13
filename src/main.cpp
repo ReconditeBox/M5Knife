@@ -584,6 +584,36 @@ static bool saveSettings(){
     "KEY_BEEP="+String(keyBeepEnabled?"1":"0")+"\n";
   return configReplaceSection("SETTINGS",body);
 }
+// Persist only the sound option. Do not save unsaved brightness/network
+// settings as a side effect of the Fn+S keyboard shortcut.
+static bool saveKeyBeep(){
+  String block=configSection(activeConfig,"SETTINGS");
+  if(activeConfig.indexOf("[SETTINGS]")<0)return false;
+  String updated;
+  bool replaced=false;
+  const String key="KEY_BEEP=";
+  int at=0;
+  while(at<(int)block.length()){
+    int end=block.indexOf('\n',at);
+    if(end<0)end=block.length();
+    String row=block.substring(at,end);
+    if(row.startsWith(key)){
+      row=key+String(keyBeepEnabled?"1":"0");
+      replaced=true;
+    }
+    updated+=row+"\n";
+    at=end+1;
+  }
+  if(!replaced)updated+=key+String(keyBeepEnabled?"1":"0")+"\n";
+  return configReplaceSection("SETTINGS",updated);
+}
+static void keyClick(){
+  if(!keyBeepEnabled)return;
+  // The Cardputer speaker API queues a short tone without a delay().
+  // Channel 0 interrupts the previous click when typing quickly.
+  const uint32_t pitch=1200+(esp_random()%2000);
+  M5Cardputer.Speaker.tone((float)pitch,18,0,true);
+}
 static void applySettings(){
   M5Cardputer.Display.setBrightness(brightness);
 }
