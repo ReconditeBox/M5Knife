@@ -846,7 +846,7 @@ static void drawHome() {
   for(int slot=0;slot<3;++slot){
     const int i=first+slot,x=8+slot*78,y=29,cx=x+34;
     const bool active=(homeIndex==i);
-    const uint16_t fill=active?0x0923:BG;
+    const uint16_t fill=active?0x2001:BG; // Subtle red tint under the selected tile
     d.fillRoundRect(x,y,68,70,6,fill);
     if(iconsOk) {
       const uint32_t from=ICON_OFFSETS[i];
