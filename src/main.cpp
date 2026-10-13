@@ -44,7 +44,7 @@ static int homeIndex = 0, diskIndex = 0;
 static int statusScroll=0;
 static int aboutScroll=0;
 static int settingsIndex=0, viewerTop=0, editorLine=0, editorColumn=0;
-static bool autoWifi=true, ntpEnabled=true;
+static bool autoWifi=true, ntpEnabled=true, keyBeepEnabled=false;
 static int brightness=128, sleepMinutes=0, tzHours=0;
 static uint32_t lastInteraction=0;
 static String editorText, searchText, editorNotice;
@@ -268,7 +268,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.16", 5, 5);
+  d.drawString("M5KNIFE 0.5.17", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -528,6 +528,7 @@ static void loadWifiConfig() {
 }
 
 static void readSettings(){
+  keyBeepEnabled=false;  // Old configs remain silent until Fn+S enables sound.
   String data=activeConfig;
   if(data.isEmpty())return;
   String block=configSection(data,"SETTINGS");
@@ -539,6 +540,7 @@ static void readSettings(){
     int equal=row.indexOf('=');if(equal<0)continue;
     String key=row.substring(0,equal),value=row.substring(equal+1);
     if(key=="AUTO_WIFI")autoWifi=value!="0";
+    else if(key=="KEY_BEEP")keyBeepEnabled=value=="1";
     else if(key=="NTP")ntpEnabled=value!="0";
     else if(key=="BRIGHTNESS")brightness=constrain(value.toInt(),20,255);
     else if(key=="SLEEP_MIN")sleepMinutes=constrain(value.toInt(),0,60);
@@ -578,7 +580,8 @@ static bool saveSettings(){
     "NTP="+(ntpEnabled?"1":"0")+"\n"+
     "BRIGHTNESS="+String(brightness)+"\n"+
     "SLEEP_MIN="+String(sleepMinutes)+"\n"+
-    "TZ_HOURS="+String(tzHours)+"\n";
+    "TZ_HOURS="+String(tzHours)+"\n"+
+    "KEY_BEEP="+String(keyBeepEnabled?"1":"0")+"\n";
   return configReplaceSection("SETTINGS",body);
 }
 static void applySettings(){
@@ -936,7 +939,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.16",
+    "Version 0.5.17",
     "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
