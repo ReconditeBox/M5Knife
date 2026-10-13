@@ -1906,6 +1906,13 @@ static void draw() {
     case Screen::WifiConnecting: drawWifiConnecting(); break;
   }
 }
+// Repaint navigation rows and highlights without blanking header/footer.
+// Full draws are still used on screen changes and after operations.
+static void redrawNavigation(){
+  uiRefreshInPlace=true;
+  draw();
+  uiRefreshInPlace=false;
+}
 static void goHome() { if(httpRunning)stopHttpFiles(); if(screen==Screen::WifiConnecting) WiFi.disconnect(false,false); wifiPassword=""; screen=Screen::Home; action=Action::None; draw(); }
 static void openFiles() { if (!sdReady) mountSd(); cwd="/"; scanDir(); screen=Screen::Files; draw(); }
 static void showMessage(const String& s, Screen back=Screen::Files) {
@@ -2007,6 +2014,7 @@ static void handleKeys(const Keys& k) {
     if(down && settingsIndex<8)++settingsIndex;
     if(left)settingsActivate(-1);
     else if(right || k.enter)settingsActivate(1);
+    else if(up||down)redrawNavigation();
     else drawSettings();
     return;
   } else if(screen==Screen::About) {
@@ -2014,7 +2022,7 @@ static void handleKeys(const Keys& k) {
     if(typed(k,'q')||k.enter){screen=Screen::AboutQr;draw();return;}
     if(up && aboutScroll>0)--aboutScroll;
     if(down && aboutScroll<14)++aboutScroll;
-    drawAbout();return;
+    redrawNavigation();return;
   } else if(screen==Screen::AboutQr) {
     if(escape||backspace||typed(k,'b')||typed(k,'q')||k.enter){
       screen=Screen::About;draw();return;
@@ -2097,7 +2105,7 @@ static void handleKeys(const Keys& k) {
       }
       screen=Screen::IrRemote;irRemoteSelection=0;draw();return;
     }
-    draw();return;
+    redrawNavigation();return;
   } else if(screen==Screen::IrManual) {
     if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
     if(typed(k,'a')||typed(k,'c')){
@@ -2176,7 +2184,7 @@ static void handleKeys(const Keys& k) {
     if(typed(k,'r')) {drawStatus();return;}
     if(up && statusScroll>0)--statusScroll;
     if(down && statusScroll<10)++statusScroll;
-    drawStatus();return;
+    redrawNavigation();return;
   } else if(screen==Screen::Files) {
     if (up && selected>0) --selected;
     if (down && selected+1<entries.size()) ++selected;
@@ -2275,7 +2283,16 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::Message) {
     if(k.enter||escape||backspace) {screen=returnScreen;draw();return;}
   }
-  draw();
+  // Lightweight repaint for navigation only. Input/editing and screen
+  // transitions keep their normal full render for correctness.
+  if((up||down||left||right) && (
+     screen==Screen::Home || screen==Screen::Files ||
+     screen==Screen::Wifi || screen==Screen::Bluetooth ||
+     screen==Screen::Network || screen==Screen::NetResult ||
+     screen==Screen::Infrared || screen==Screen::IrRemote ||
+     screen==Screen::Disk))
+    redrawNavigation();
+  else draw();
 }
 void setup() {
   auto cfg=M5.config();
