@@ -2,7 +2,7 @@
 
 **A standalone utilities toolkit for the M5Stack Cardputer Adv.**
 
-**Current firmware: 0.5.15**
+**Current firmware: 0.5.16**
 
 M5Knife combines an SD card file manager, USB card reader, Wi-Fi and network tools, Bluetooth scanning, infrared remotes and system information in a small keyboard-driven launcher. It also runs an HTTP file manager that can be reached over an existing Wi-Fi network or directly from a phone using the Cardputer's own hotspot.
 
@@ -72,17 +72,18 @@ M5Knife's launcher displays **three tiles at a time** and scrolls horizontally t
 
 | Key | Action |
 | --- | --- |
-| `A` / `D` | Move left / right on the launcher |
-| `W` / `S` | Move up / down in menus and lists |
-| `Fn + ,` / `Fn + /` | Left / right cursor keys |
-| `Fn + ;` / `Fn + .` | Up / down cursor keys |
+| `,` (←) / `/` (→) | Move left / right without Fn in the launcher and navigation screens |
+| `;` (↑) / `.` (↓) | Move up / down without Fn in menus, lists and other navigation screens |
+| `A` / `D` | Alternative left / right navigation |
+| `W` / `S` | Alternative up / down navigation |
+| `Fn + ;` / `,` / `.` / `/` | Move the cursor in the built-in text editor, leaving the unmodified punctuation keys available for typing |
 | `Enter` | Select, open, or activate |
 | `B` | Back in most menus |
 | **Fn + backtick** | Escape/cancel in input and editor screens |
 | **G0** | Return to the main launcher; USB mode protects against unsafe exit |
 | `R` | Refresh where offered |
 
-**Fn is the Cardputer's `Aa` key.** The keys shown in the footer of each screen take precedence over these general shortcuts.
+**Fn is the Cardputer's `Aa` key.** The arrow symbols printed on the `; , . /` keys now navigate menus **without** Fn. In text entry fields these keys still type punctuation; in the built-in editor, hold Fn for cursor movement. The keys shown in the footer of each screen take precedence over these general shortcuts.
 
 ## Launcher and tools
 
@@ -100,7 +101,7 @@ M5Knife's launcher displays **three tiles at a time** and scrolls horizontally t
 
 ### Files and built-in text editor
 
-The **Files** screen lists directories before files. Navigate with W/S and open with Enter.
+The **Files** screen lists directories before files. Navigate with the up/down arrow-labelled keys (`;` / `.`) or W/S and open with Enter.
 
 | Key | Files action |
 | --- | --- |
@@ -112,7 +113,7 @@ The **Files** screen lists directories before files. Navigate with W/S and open 
 | `M` | Open SD disk information / format menu |
 | `R` | Refresh or retry mounting SD |
 
-Opening a file loads the built-in text viewer; the maximum file size is **8 KiB**. In the viewer, W/S scroll, F finds text and E switches to the editor. In edit mode, use cursor keys, Del and Enter to change text; **Fn+S** saves. Use **Fn + backtick** to exit the viewer/editor. Files larger than 8 KiB are not supported by this viewer. Carriage returns are removed when text is loaded, so saving can change CRLF line endings to LF: do not use the editor on files whose exact bytes must be preserved.
+Opening a file loads the built-in text viewer; the maximum file size is **8 KiB**. In the viewer, W/S scroll, F finds text and E switches to the editor. In edit mode, use **Fn + arrow-labelled keys** to move the cursor, Del and Enter to change text; ordinary letters (including W/A/S/D) and punctuation remain typeable. **Fn+S** saves. Use **Fn + backtick** to exit the viewer/editor. Files larger than 8 KiB are not supported by this viewer. Carriage returns are removed when text is loaded, so saving can change CRLF line endings to LF: do not use the editor on files whose exact bytes must be preserved.
 
 Saves use a temporary file and a backup/rename sequence. The disk menu reports SD capacity and usage. **SD formatting is displayed but deliberately disabled.** Recursive copying/moving files or directories is not implemented.
 
@@ -154,7 +155,7 @@ DNS, ping and scanning need a normal Wi-Fi connection. The LAN scanner is **TCP-
 
 ### Settings, Status and About
 
-**Settings** offers Auto WiFi, NTP sync, UTC offset, brightness, sleep timeout (including **Never**, the default), Save settings, Sync time now, and configuration Import/Export. Select a row using W/S; use A/D or Enter to change/activate it. Choose **Save settings** to persist manual settings changes in NVS.
+**Settings** offers Auto WiFi, NTP sync, UTC offset, brightness, sleep timeout (including **Never**, the default), Save settings, Sync time now, and configuration Import/Export. Select a row using the up/down arrow-labelled keys or W/S; use left/right arrow-labelled keys, A/D or Enter to change/activate it. Choose **Save settings** to persist manual settings changes in NVS.
 
 **Status** is scrollable and reports connected Wi-Fi and IP, Wi-Fi/Bluetooth MAC addresses, SD total/used/free space, current/minimum/total heap, battery percentage/voltage and local clock. **About** identifies the firmware, version and hardware. From **About**, press **Enter** or **Q** on the highlighted **GitHub QR** option to display a scannable link to https://github.com/ReconditeBox/M5Knife. Press **B**, **Enter** or **Q** to return to About, or **G0** to return home. The QR code is generated locally and does not need Wi-Fi or an SD card.
 
