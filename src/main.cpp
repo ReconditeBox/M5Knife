@@ -895,6 +895,7 @@ static void drawFiles() {
     if (label.length()>32) label=label.substring(0,29)+"...";
     line(39+r*13, label, selected==i);
   }
+  scrollIndicator((int)entries.size(),6,(int)scrollPos,37,77);
   footer("Arrows move  B back  M disk");
 }
 static void drawWifiPassword() {
@@ -942,7 +943,8 @@ static void drawScan(bool wifi) {
     label+=" "+String(e.rssi)+"dBm";
     line(36+row*13,label,n==scanSelection);
   }
-  footer(wifi ? "Enter join P save L load D off" : "Up/Down scroll R rescan B back");
+  scrollIndicator((int)scanEntries.size(),6,(int)scanScroll,34,79);
+  footer(wifi ? "Enter join P save L load D off" : "Arrows scroll R rescan B back");
 }
 static String hardwareAddress(esp_mac_type_t type) {
   uint8_t mac[6] = {0};
@@ -984,7 +986,8 @@ static void drawStatus() {
     line(22+i*14,rows[n].substring(0,37),false,
       (n==0||n==6||n==10||n==13)?ACCENT:FG);
   }
-  footer("Up/Down scroll R refresh B back");
+  scrollIndicator(total,7,statusScroll);
+  footer("Arrows scroll R refresh B back");
 }
 static void drawAbout() {
   header("ABOUT");
@@ -1019,7 +1022,8 @@ static void drawAbout() {
     line(22+i*14,rows[n],n==2,
       (n==0 || n==2 || n==6 || n==9 || n==11 || n==14)?ACCENT:FG);
   }
-  footer("Up/Down scroll Enter/Q QR B back");
+  scrollIndicator(count,7,aboutScroll);
+  footer("Arrows scroll Enter/Q QR B back");
 }
 // Offline QR: the code encodes the public repository URL; no network is needed.
 static void drawAboutQr() {
@@ -1064,7 +1068,8 @@ static void drawIrLibrary(){
       line(36+row*13,label,index==irLibrarySelection);
     }
   }
-  footer("Up/Down choose Enter B back");
+  scrollIndicator((int)irProfiles.size(),6,irLibraryScroll,34,79);
+  footer("Arrows select Enter use B back");
 }
 static void drawIrManual() {
   header("IR TRANSMIT");
