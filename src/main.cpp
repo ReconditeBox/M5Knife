@@ -1880,12 +1880,15 @@ static bool typed(const Keys& k, char c) {
   return false;
 }
 static void handleKeys(const Keys& k) {
-  // v1.1.1 KeysState has no arrow/esc/backspace members.
-  // Fn+; , . / supplies the cursor directions; Fn+` is Escape.
-  const bool up=(k.fn && typed(k,';')) || (!k.fn && typed(k,'w'));
-  const bool down=(k.fn && typed(k,'.')) || (!k.fn && typed(k,'s'));
-  const bool left=(k.fn && typed(k,',')) || (!k.fn && typed(k,'a'));
-  const bool right=(k.fn && typed(k,'/')) || (!k.fn && typed(k,'d'));
+  // The Cardputer's printed arrow keys are ; , . / on the base layer.
+  // Allow them without Fn for navigation, while retaining WASD as alternatives.
+  // In the text editor, reserve unmodified keys for typing (including WASD
+  // and punctuation), so cursor movement there still requires Fn+arrows.
+  const bool inTextEditor=(screen==Screen::Viewer && textEdit);
+  const bool up=(k.fn && typed(k,';')) || (!k.fn && !inTextEditor && (typed(k,';') || typed(k,'w')));
+  const bool down=(k.fn && typed(k,'.')) || (!k.fn && !inTextEditor && (typed(k,'.') || typed(k,'s')));
+  const bool left=(k.fn && typed(k,',')) || (!k.fn && !inTextEditor && (typed(k,',') || typed(k,'a')));
+  const bool right=(k.fn && typed(k,'/')) || (!k.fn && !inTextEditor && (typed(k,'/') || typed(k,'d')));
   const bool escape=k.fn && typed(k,'`');
   const bool backspace=k.del && !k.fn;
   if(screen==Screen::Home) {
