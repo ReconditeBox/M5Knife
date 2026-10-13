@@ -51,6 +51,7 @@ static String editorText, searchText, editorNotice;
 static bool editorDirty=false, editorSearchMode=false;
 static bool ntpStarted=false;
 static bool waitingKeyRelease = false;
+static uint32_t keyBeepNoticeAt=0;
 struct ScanEntry { String label; int rssi; bool secured; };
 static std::vector<ScanEntry> scanEntries;
 static size_t scanSelection = 0, scanScroll = 0;
@@ -1913,6 +1914,22 @@ static bool typed(const Keys& k, char c) {
   return false;
 }
 static void handleKeys(const Keys& k) {
+  // Fn+S is the global sound toggle except while actively editing text,
+  // where it retains its existing save-file behaviour.
+  if(k.fn && typed(k,'s') && !(screen==Screen::Viewer && textEdit)){
+    keyBeepEnabled=!keyBeepEnabled;
+    const bool saved=saveKeyBeep();
+    keyClick();  // Turning sound on immediately demonstrates the mode.
+    draw();
+    auto& d=M5Cardputer.Display;
+    d.fillRect(0,120,240,15,0x0205);
+    d.setTextColor(saved?ACCENT:WARN,0x0205);
+    d.drawString(String("KEY BEEPS: ")+(keyBeepEnabled?"ON":"OFF")+
+      (saved?"":" (NOT SAVED)"),4,123);
+    keyBeepNoticeAt=millis();
+    return;
+  }
+  keyClick();
   // The Cardputer's printed arrow keys are ; , . / on the base layer.
   // Allow them without Fn for navigation, while retaining WASD as alternatives.
   // In the text editor, reserve unmodified keys for typing (including WASD
