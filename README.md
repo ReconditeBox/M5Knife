@@ -106,7 +106,7 @@ The launcher now uses **nine individually illustrated metallic red-and-chrome
 icons** based on the approved M5Knife mountain/Swiss-army-knife concept:
 Files, USB, WiFi, Network, Bluetooth, Infrared, Settings, Status and About.
 Each is a compact **64 × 53 pixel JPEG**, shown inside the existing tile,
-with a green selection outline and the tool's label below it.
+with a bright red selection outline and the tool's label below it.
 
 The images are packed in `src/icons.bin` (about **14 KiB total**) and
 embedded in firmware flash via `board_build.embed_files`, alongside the
