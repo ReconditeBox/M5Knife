@@ -2,7 +2,7 @@
 
 **A standalone utilities toolkit for the M5Stack Cardputer Adv.**
 
-**Current firmware: 0.5.18**
+**Current firmware: 0.5.19**
 
 M5Knife combines an SD card file manager, USB card reader, Wi-Fi and network tools, Bluetooth scanning, infrared remotes and system information in a small keyboard-driven launcher. It also runs an HTTP file manager that can be reached over an existing Wi-Fi network or directly from a phone using the Cardputer's own hotspot.
 
@@ -65,6 +65,16 @@ To open a 115200 baud serial monitor:
 ```
 
 If you need to find the COM port, open **Windows Device Manager → Ports (COM & LPT)**. Close the serial monitor before uploading. USB MSC uses the ESP32-S3's native USB mode, which may change enumeration and available serial ports; use the device's download/BOOT mode if normal upload fails.
+
+## Startup splash
+
+When M5Knife powers on, it displays the supplied M5Knife Swiss Army knife and
+mountain artwork full-screen at **240 × 135 pixels** for a minimum of two seconds.
+The image is embedded directly in program flash as `src/splash.jpg` using
+PlatformIO's `board_build.embed_files` option and is drawn with M5GFX's JPEG
+decoder. An SD card, Wi-Fi connection or separate image file on the card is
+**not** required. Startup initialisation runs while the splash is displayed;
+the normal nine-icon launcher appears afterwards.
 
 ## Keyboard controls
 
@@ -328,7 +338,8 @@ Hotspot SSIDs must be **1–32 bytes** and their WPA2 passwords **8–63 bytes**
 
 ## Project layout
 
-- `src/main.cpp` — firmware, launcher and built-in tools.
+- `src/main.cpp` — firmware, splash display, launcher and built-in tools.
+- `src/splash.jpg` — 240 × 135 JPEG startup artwork, embedded in firmware flash at build time.
 - `platformio.ini` — board/platform configuration, USB build flags and pinned dependencies.
 - `README.md` — current user guide.
 
