@@ -2149,7 +2149,7 @@ static void handleKeys(const Keys& k) {
     if (k.enter) {beginWifiConnection();return;}
     if (k.del) {if(wifiPassword.length()) wifiPassword.remove(wifiPassword.length()-1);}
     else for(char c:k.word) if(c>=32 && c<=126 && wifiPassword.length()<63) wifiPassword+=c;
-    draw(); return;
+    redrawNavigation();return;
   } else if(screen==Screen::WifiConnecting) {
     // The connection attempt is asynchronous; G0 is handled centrally.
     return;
@@ -2285,13 +2285,15 @@ static void handleKeys(const Keys& k) {
   }
   // Lightweight repaint for navigation only. Input/editing and screen
   // transitions keep their normal full render for correctness.
-  if((up||down||left||right) && (
+  const bool navigation=(up||down||left||right) && (
      screen==Screen::Home || screen==Screen::Files ||
      screen==Screen::Wifi || screen==Screen::Bluetooth ||
      screen==Screen::Network || screen==Screen::NetResult ||
      screen==Screen::Infrared || screen==Screen::IrRemote ||
-     screen==Screen::Disk))
-    redrawNavigation();
+     screen==Screen::Disk);
+  const bool textInput=(screen==Screen::Input || screen==Screen::NetInput ||
+                        screen==Screen::IrEdit || screen==Screen::EditorSearch);
+  if(navigation || textInput)redrawNavigation();
   else draw();
 }
 void setup() {
