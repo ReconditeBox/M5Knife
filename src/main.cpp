@@ -37,6 +37,7 @@ struct Entry { String name; bool dir; uint64_t size; };
 static Screen screen = Screen::Home, returnScreen = Screen::Files;
 // In-place redraws preserve the static header/footer to avoid screen flashes.
 static bool uiRefreshInPlace=false;
+static String uiLastFooter;
 static Action action = Action::None;
 static std::vector<Entry> entries;
 static String cwd = "/", inputText, message, selectedPath;
@@ -296,6 +297,7 @@ static void header(const char* text) {
 }
 static void footer(const String& text) {
   if(uiRefreshInPlace)return;
+  uiLastFooter=text;
   auto& d = M5Cardputer.Display;
   d.fillRect(0, 120, 240, 15, 0x0205);
   d.setTextColor(MUTED, 0x0205);
@@ -2381,10 +2383,12 @@ void loop() {
     lastInteraction=millis();applySettings();
     handleKeys(M5Cardputer.Keyboard.keysState());
   }
-  // Restore normal footer after a temporary Fn+S sound-mode notification.
+  // Restore only the footer after a sound-mode toast, not the whole display.
   if(keyBeepNoticeAt && (uint32_t)(millis()-keyBeepNoticeAt)>=1400){
     keyBeepNoticeAt=0;
-    draw();
+    if(screen==Screen::AboutQr || (screen==Screen::HttpFiles && httpQrMode!=0))
+      draw(); // QR screens render their own lower labels rather than a footer.
+    else footer(uiLastFooter);
   }
   if(screen==Screen::WifiConnecting) {
     wl_status_t state=WiFi.status();
