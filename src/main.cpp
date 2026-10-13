@@ -854,12 +854,12 @@ static void drawHome() {
       d.drawJpg(iconJpgStart+from,length,x+2,y+2);
     }
     // Always keep a visible selection ring, independent of icon colours.
-    d.drawRoundRect(x,y,68,70,6,active?ACCENT:0x4208);
+    d.drawRoundRect(x,y,68,70,6,active?0xF800:0x4208);
     if(active){
-      d.drawRoundRect(x+1,y+1,66,68,5,0x0640);
-      d.drawFastHLine(x+14,y,40,ACCENT);
+      d.drawRoundRect(x+1,y+1,66,68,5,0xA800);
+      d.drawFastHLine(x+14,y,40,0xF800);
     }
-    d.setTextColor(active?ACCENT:FG,fill);
+    d.setTextColor(active?0xFFFF:FG,fill);
     d.drawCenterString(labels[i],cx,y+56);
   }
   d.fillRect(85,103,70,13,BG);
