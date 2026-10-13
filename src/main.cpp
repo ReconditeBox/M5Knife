@@ -308,6 +308,18 @@ static void line(int y, const String& s, bool active=false, uint16_t color=FG) {
   d.setTextColor(active ? ACCENT : color, active ? SEL : BG);
   d.drawString(s, 7, y);
 }
+// Thin right-edge scrollbar; visible only when a list has hidden rows.
+static void scrollIndicator(int total,int visible,int first,int top=21,int height=95){
+  if(total<=visible)return;
+  auto& d=M5Cardputer.Display;
+  constexpr int x=238;
+  d.drawFastVLine(x,top,height,0x2308);
+  d.drawFastVLine(x+1,top,height,0x2308);
+  const int thumb=std::max(9,height*visible/total);
+  const int range=total-visible;
+  const int offset=range>0?(constrain(first,0,range)*(height-thumb))/range:0;
+  d.fillRect(x,top+offset,2,thumb,ACCENT);
+}
 static String basenameOf(const String& p) {
   int k = p.lastIndexOf('/'); return p.substring(k + 1);
 }
@@ -652,9 +664,12 @@ static void drawSettings(){
     "Import config from SD",
     "Export config to SD"
   };
-  const int first=std::max(0,settingsIndex-5);
-  for(int i=first;i<9;i++)line(22+(i-first)*14,rows[i],i==settingsIndex);
-  footer("Arrows choose/change Enter");
+  // Seven lines fit between the 19px header and 15px footer.
+  const int first=std::max(0,settingsIndex-6);
+  for(int i=first;i<9 && i<first+7;i++)
+    line(22+(i-first)*14,rows[i],i==settingsIndex);
+  scrollIndicator(9,7,first);
+  footer("Up/Down select  Left/Right edit");
 }
 static void settingsActivate(int delta){
   if(settingsIndex==0)autoWifi=!autoWifi;
