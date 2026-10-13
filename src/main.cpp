@@ -320,6 +320,13 @@ static void scrollIndicator(int total,int visible,int first,int top=21,int heigh
   const int offset=range>0?(constrain(first,0,range)*(height-thumb))/range:0;
   d.fillRect(x,top+offset,2,thumb,ACCENT);
 }
+static int resultLineCount(const String& text){
+  if(text.isEmpty())return 0;
+  int count=0;
+  for(size_t i=0;i<text.length();++i)if(text[i]=='\n')++count;
+  if(!text.endsWith("\n"))++count;
+  return count;
+}
 static String basenameOf(const String& p) {
   int k = p.lastIndexOf('/'); return p.substring(k + 1);
 }
@@ -1571,7 +1578,8 @@ static void drawNetworkResult() {
     }
     pos=end+1;
   }
-  footer("Up/Down scroll B back G0 home");
+  scrollIndicator(resultLineCount(netOutput),7,(int)netResultScroll);
+  footer("Arrows scroll B back G0 home");
 }
 static uint16_t netChecksum(const uint8_t *p,size_t len){
   uint32_t sum=0;
@@ -2057,7 +2065,8 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::NetResult) {
     if(escape||backspace||typed(k,'b')||k.enter){screen=Screen::Network;draw();return;}
     if(up && netResultScroll>0)--netResultScroll;
-    if(down && netResultScroll<200)++netResultScroll;
+    if(down && netResultScroll<(size_t)std::max(0,resultLineCount(netOutput)-7))
+      ++netResultScroll;
   } else if(screen==Screen::Infrared) {
     if(escape||backspace||typed(k,'b')) {goHome();return;}
     if(up && irMenuIndex>0)--irMenuIndex;
