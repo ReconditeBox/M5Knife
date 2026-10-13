@@ -44,13 +44,14 @@ static int homeIndex = 0, diskIndex = 0;
 static int statusScroll=0;
 static int aboutScroll=0;
 static int settingsIndex=0, viewerTop=0, editorLine=0, editorColumn=0;
-static bool autoWifi=true, ntpEnabled=true;
+static bool autoWifi=true, ntpEnabled=true, keyBeepEnabled=false;
 static int brightness=128, sleepMinutes=0, tzHours=0;
 static uint32_t lastInteraction=0;
 static String editorText, searchText, editorNotice;
 static bool editorDirty=false, editorSearchMode=false;
 static bool ntpStarted=false;
 static bool waitingKeyRelease = false;
+static uint32_t keyBeepNoticeAt=0;
 struct ScanEntry { String label; int rssi; bool secured; };
 static std::vector<ScanEntry> scanEntries;
 static size_t scanSelection = 0, scanScroll = 0;
@@ -268,7 +269,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.16", 5, 5);
+  d.drawString("M5KNIFE 0.5.17", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -528,6 +529,7 @@ static void loadWifiConfig() {
 }
 
 static void readSettings(){
+  keyBeepEnabled=false;  // Old configs remain silent until Fn+S enables sound.
   String data=activeConfig;
   if(data.isEmpty())return;
   String block=configSection(data,"SETTINGS");
@@ -539,6 +541,7 @@ static void readSettings(){
     int equal=row.indexOf('=');if(equal<0)continue;
     String key=row.substring(0,equal),value=row.substring(equal+1);
     if(key=="AUTO_WIFI")autoWifi=value!="0";
+    else if(key=="KEY_BEEP")keyBeepEnabled=value=="1";
     else if(key=="NTP")ntpEnabled=value!="0";
     else if(key=="BRIGHTNESS")brightness=constrain(value.toInt(),20,255);
     else if(key=="SLEEP_MIN")sleepMinutes=constrain(value.toInt(),0,60);
@@ -578,8 +581,39 @@ static bool saveSettings(){
     "NTP="+(ntpEnabled?"1":"0")+"\n"+
     "BRIGHTNESS="+String(brightness)+"\n"+
     "SLEEP_MIN="+String(sleepMinutes)+"\n"+
-    "TZ_HOURS="+String(tzHours)+"\n";
+    "TZ_HOURS="+String(tzHours)+"\n"+
+    "KEY_BEEP="+String(keyBeepEnabled?"1":"0")+"\n";
   return configReplaceSection("SETTINGS",body);
+}
+// Persist only the sound option. Do not save unsaved brightness/network
+// settings as a side effect of the Fn+S keyboard shortcut.
+static bool saveKeyBeep(){
+  String block=configSection(activeConfig,"SETTINGS");
+  if(activeConfig.indexOf("[SETTINGS]")<0)return false;
+  String updated;
+  bool replaced=false;
+  const String key="KEY_BEEP=";
+  int at=0;
+  while(at<(int)block.length()){
+    int end=block.indexOf('\n',at);
+    if(end<0)end=block.length();
+    String row=block.substring(at,end);
+    if(row.startsWith(key)){
+      row=key+String(keyBeepEnabled?"1":"0");
+      replaced=true;
+    }
+    updated+=row+"\n";
+    at=end+1;
+  }
+  if(!replaced)updated+=key+String(keyBeepEnabled?"1":"0")+"\n";
+  return configReplaceSection("SETTINGS",updated);
+}
+static void keyClick(){
+  if(!keyBeepEnabled)return;
+  // The Cardputer speaker API queues a short tone without a delay().
+  // Channel 0 interrupts the previous click when typing quickly.
+  const uint32_t pitch=1200+(esp_random()%2000);
+  M5Cardputer.Speaker.tone((float)pitch,18,0,true);
 }
 static void applySettings(){
   M5Cardputer.Display.setBrightness(brightness);
@@ -936,7 +970,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.16",
+    "Version 0.5.17",
     "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
@@ -1880,6 +1914,22 @@ static bool typed(const Keys& k, char c) {
   return false;
 }
 static void handleKeys(const Keys& k) {
+  // Fn+S is the global sound toggle except while actively editing text,
+  // where it retains its existing save-file behaviour.
+  if(k.fn && typed(k,'s') && !(screen==Screen::Viewer && textEdit)){
+    keyBeepEnabled=!keyBeepEnabled;
+    const bool saved=saveKeyBeep();
+    keyClick();  // Turning sound on immediately demonstrates the mode.
+    draw();
+    auto& d=M5Cardputer.Display;
+    d.fillRect(0,120,240,15,0x0205);
+    d.setTextColor(saved?ACCENT:WARN,0x0205);
+    d.drawString(String("KEY BEEPS: ")+(keyBeepEnabled?"ON":"OFF")+
+      (saved?"":" (NOT SAVED)"),4,123);
+    keyBeepNoticeAt=millis();
+    return;
+  }
+  keyClick();
   // The Cardputer's printed arrow keys are ; , . / on the base layer.
   // Allow them without Fn for navigation, while retaining WASD as alternatives.
   // In the text editor, reserve unmodified keys for typing (including WASD
@@ -2196,6 +2246,7 @@ static void handleKeys(const Keys& k) {
 void setup() {
   auto cfg=M5.config();
   M5Cardputer.begin(cfg,true);
+  M5Cardputer.Speaker.setVolume(36);  // Low-volume key click; no startup sound.
   M5Cardputer.Display.setRotation(1);
   M5Cardputer.Display.setFont(&fonts::Font0);
   M5Cardputer.Display.setTextSize(1);
@@ -2252,6 +2303,7 @@ void loop() {
     M5Cardputer.Display.setBrightness(0);
   // G0 is globally handled BEFORE all tool-specific keyboard processing.
   if(M5Cardputer.BtnA.wasPressed()) {
+    keyClick();
     if (usbActive) {
       if ((!usbConnected || usbEjected) && !usbWriting) {stopUsb();goHome();}
       else drawUsb();
@@ -2263,6 +2315,11 @@ void loop() {
   if(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
     lastInteraction=millis();applySettings();
     handleKeys(M5Cardputer.Keyboard.keysState());
+  }
+  // Restore normal footer after a temporary Fn+S sound-mode notification.
+  if(keyBeepNoticeAt && (uint32_t)(millis()-keyBeepNoticeAt)>=1400){
+    keyBeepNoticeAt=0;
+    draw();
   }
   if(screen==Screen::WifiConnecting) {
     wl_status_t state=WiFi.status();

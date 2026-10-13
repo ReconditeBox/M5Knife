@@ -2,7 +2,7 @@
 
 **A standalone utilities toolkit for the M5Stack Cardputer Adv.**
 
-**Current firmware: 0.5.16**
+**Current firmware: 0.5.17**
 
 M5Knife combines an SD card file manager, USB card reader, Wi-Fi and network tools, Bluetooth scanning, infrared remotes and system information in a small keyboard-driven launcher. It also runs an HTTP file manager that can be reached over an existing Wi-Fi network or directly from a phone using the Cardputer's own hotspot.
 
@@ -80,8 +80,11 @@ M5Knife's launcher displays **three tiles at a time** and scrolls horizontally t
 | `Enter` | Select, open, or activate |
 | `B` | Back in most menus |
 | **Fn + backtick** | Escape/cancel in input and editor screens |
+| **Fn + S** | Toggle random-pitch key beeps ON/OFF (except while editing a text file, where it still saves) |
 | **G0** | Return to the main launcher; USB mode protects against unsafe exit |
 | `R` | Refresh where offered |
+
+**Keypresses are silent by default.** Press **Fn+S** from the launcher or another screen to toggle short, randomly pitched speaker beeps for keyboard presses and G0. A temporary footer message confirms the new mode; the choice is saved to NVS, so it survives a restart. In the built-in text editor, Fn+S **still saves the file** instead of changing the sound mode. To change sound while editing, exit the editor first.
 
 **Fn is the Cardputer's `Aa` key.** The arrow symbols printed on the `; , . /` keys now navigate menus **without** Fn. In text entry fields these keys still type punctuation; in the built-in editor, hold Fn for cursor movement. The keys shown in the footer of each screen take precedence over these general shortcuts.
 
@@ -155,7 +158,7 @@ DNS, ping and scanning need a normal Wi-Fi connection. The LAN scanner is **TCP-
 
 ### Settings, Status and About
 
-**Settings** offers Auto WiFi, NTP sync, UTC offset, brightness, sleep timeout (including **Never**, the default), Save settings, Sync time now, and configuration Import/Export. Select a row using the up/down arrow-labelled keys or W/S; use left/right arrow-labelled keys, A/D or Enter to change/activate it. Choose **Save settings** to persist manual settings changes in NVS.
+**Settings** offers Auto WiFi, NTP sync, UTC offset, brightness, sleep timeout (including **Never**, the default), Save settings, Sync time now, and configuration Import/Export. Select a row using the up/down arrow-labelled keys or W/S; use left/right arrow-labelled keys, A/D or Enter to change/activate it. Choose **Save settings** to persist manual settings changes in NVS. The Fn+S key-beep switch saves its own setting immediately without saving unrelated unsaved settings.
 
 **Status** is scrollable and reports connected Wi-Fi and IP, Wi-Fi/Bluetooth MAC addresses, SD total/used/free space, current/minimum/total heap, battery percentage/voltage and local clock. **About** identifies the firmware, version and hardware. From **About**, press **Enter** or **Q** on the highlighted **GitHub QR** option to display a scannable link to https://github.com/ReconditeBox/M5Knife. Press **B**, **Enter** or **Q** to return to About, or **G0** to return home. The QR code is generated locally and does not need Wi-Fi or an SD card.
 
@@ -216,7 +219,7 @@ To **add or modify** profiles, edit the configuration text file and import it us
 
 ## Configuration and NVS
 
-**ESP32-S3 NVS flash is the primary configuration store.** It keeps settings, saved Wi-Fi credentials, HTTP login, hotspot options and infrared profiles. The microSD root file **`/M5KNIFE.CFG`** is an **optional human-readable import/export copy**, not a requirement for ordinary startup.
+**ESP32-S3 NVS flash is the primary configuration store.** It keeps settings (including the keyboard beep mode), saved Wi-Fi credentials, HTTP login, hotspot options and infrared profiles. The microSD root file **`/M5KNIFE.CFG`** is an **optional human-readable import/export copy**, not a requirement for ordinary startup.
 
 On first startup without valid NVS configuration, M5Knife tries to import `/M5KNIFE.CFG` if present; otherwise it creates default configuration in NVS. In **Settings**:
 
@@ -237,6 +240,7 @@ NTP=1
 TZ_HOURS=0
 BRIGHTNESS=128
 SLEEP_MIN=0
+KEY_BEEP=0
 
 [WIFI]
 SSID1=ExampleNetwork
@@ -275,6 +279,8 @@ MUTE=0xE2
 [IR_LIBRARY]
 SLOT=1
 ```
+
+`KEY_BEEP=0` means silent keyboard (default); `KEY_BEEP=1` enables the short random-pitch key clicks. The Fn+S toggle updates this value directly in NVS, and configuration export includes it.
 
 Additional Wi-Fi records use `SSID2`/`PASS2`, etc., up to 16. Additional remote sections run through `[REMOTE8]`. `[IR_LIBRARY]` records the selected slot; normally the firmware updates it when you select a profile.
 
