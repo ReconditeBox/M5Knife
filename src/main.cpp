@@ -692,7 +692,10 @@ static void settingsActivate(int delta){
     return;
   }
   else if(settingsIndex==8){showMessage(configExportSd()?"Exported M5KNIFE.CFG":"Export failed / no SD",Screen::Settings);return;}
-  applySettings();drawSettings();
+  applySettings();
+  uiRefreshInPlace=true;
+  drawSettings();
+  uiRefreshInPlace=false;
 }
 
 // Each slot is backed by a complete named section in NVS configuration.
