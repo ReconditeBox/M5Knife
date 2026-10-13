@@ -268,7 +268,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.15", 5, 5);
+  d.drawString("M5KNIFE 0.5.16", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -615,7 +615,7 @@ static void drawSettings(){
   };
   const int first=std::max(0,settingsIndex-5);
   for(int i=first;i<9;i++)line(22+(i-first)*14,rows[i],i==settingsIndex);
-  footer("W/S select A/D change Enter");
+  footer("Arrows choose/change Enter");
 }
 static void settingsActivate(int delta){
   if(settingsIndex==0)autoWifi=!autoWifi;
@@ -827,7 +827,7 @@ static void drawHome() {
   }
   d.setTextColor(MUTED,BG);
   d.drawCenterString(String(homeIndex+1)+" / 9",120,104);
-  footer("A/D or arrows: scroll  Enter  G0");
+  footer("Arrows/A-D move  Enter  G0");
 }
 static void drawFiles() {
   header("FILES");
@@ -841,7 +841,7 @@ static void drawFiles() {
     if (label.length()>32) label=label.substring(0,29)+"...";
     line(39+r*13, label, selected==i);
   }
-  footer("Fn+;,./ arrows  B back  M disk");
+  footer("Arrows move  B back  M disk");
 }
 static void drawWifiPassword() {
   header("WIFI PASSWORD");
@@ -888,7 +888,7 @@ static void drawScan(bool wifi) {
     label+=" "+String(e.rssi)+"dBm";
     line(36+row*13,label,n==scanSelection);
   }
-  footer(wifi ? "Enter join P save L load D off" : "W/S scroll  R rescan  B back");
+  footer(wifi ? "Enter join P save L load D off" : "Up/Down scroll R rescan B back");
 }
 static String hardwareAddress(esp_mac_type_t type) {
   uint8_t mac[6] = {0};
@@ -930,13 +930,13 @@ static void drawStatus() {
     line(22+i*14,rows[n].substring(0,37),false,
       (n==0||n==6||n==10||n==13)?ACCENT:FG);
   }
-  footer("W/S scroll  R refresh  B back");
+  footer("Up/Down scroll R refresh B back");
 }
 static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.15",
+    "Version 0.5.16",
     "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
@@ -965,7 +965,7 @@ static void drawAbout() {
     line(22+i*14,rows[n],n==2,
       (n==0 || n==2 || n==6 || n==9 || n==11 || n==14)?ACCENT:FG);
   }
-  footer("W/S scroll  Enter/Q QR  B/G0 back");
+  footer("Up/Down scroll Enter/Q QR B back");
 }
 // Offline QR: the code encodes the public repository URL; no network is needed.
 static void drawAboutQr() {
@@ -991,7 +991,7 @@ static void drawIrMenu() {
   line(26,"NEC / Samsung - "+String(irProfiles.size())+" saved",false,ACCENT);
   const char* options[]={"Manual transmit","Remote control","Remote library","IR information"};
   for(int i=0;i<4;++i) line(45+i*16,options[i],irMenuIndex==i);
-  footer("W/S select Enter  B/G0 back");
+  footer("Up/Down choose Enter B/G0 back");
 }
 static void drawIrLibrary(){
   header("IR LIBRARY");
@@ -1010,7 +1010,7 @@ static void drawIrLibrary(){
       line(36+row*13,label,index==irLibrarySelection);
     }
   }
-  footer("W/S choose Enter use B back");
+  footer("Up/Down choose Enter B back");
 }
 static void drawIrManual() {
   header("IR TRANSMIT");
@@ -1034,13 +1034,13 @@ static void drawIrRemote() {
     String name=String(irButtonNames[i])+(irButtonPresent[i]?"":" (unset)");
     line(36+i*13,name,irRemoteSelection==i);
   }
-  footer("W/S choose Enter send L library");
+  footer("Up/Down choose Enter send L library");
 }
 static void drawNetworkMenu() {
   header("NETWORK");
   const char* options[]={"Network info","DNS lookup","Ping","TCP port scan","LAN scanner","HTTP File Server","HTTP Hotspot"};
   for(int i=0;i<7;++i)line(20+i*14,options[i],i==netMenuIndex);
-  footer("W/S select Enter  B/G0 back");
+  footer("Up/Down choose Enter B/G0 back");
 }
 static String httpServerIp(){
   return (httpHotspotActive?WiFi.softAPIP():WiFi.localIP()).toString();
@@ -1512,7 +1512,7 @@ static void drawNetworkResult() {
     }
     pos=end+1;
   }
-  footer("W/S scroll  B back  G0 home");
+  footer("Up/Down scroll B back G0 home");
 }
 static uint16_t netChecksum(const uint8_t *p,size_t len){
   uint32_t sum=0;
@@ -1787,7 +1787,7 @@ static void drawViewer(){
     if(next==(int)textBuffer.length())break;
     offset=next+1;++number;
   }
-  footer(textEdit?"Fn+arrows move Fn+S save Esc exit":"W/S scroll F find E edit B back");
+  footer(textEdit?"Fn+arrows move Fn+S save Esc exit":"Up/Down scroll F find E edit B back");
 }
 static bool saveText(){
   if(!sdReady||usbActive)return false;
