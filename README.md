@@ -2,7 +2,7 @@
 
 **A standalone utilities toolkit for the M5Stack Cardputer Adv.**
 
-**Current firmware: 0.5.19**
+**Current firmware: 0.5.20**
 
 M5Knife combines an SD card file manager, USB card reader, Wi-Fi and network tools, Bluetooth scanning, infrared remotes and system information in a small keyboard-driven launcher. It also runs an HTTP file manager that can be reached over an existing Wi-Fi network or directly from a phone using the Cardputer's own hotspot.
 
@@ -99,6 +99,20 @@ M5Knife's launcher displays **three tiles at a time** and scrolls horizontally t
 **Fn is the Cardputer's `Aa` key.** The arrow symbols printed on the `; , . /` keys now navigate menus **without** Fn. In text entry fields these keys still type punctuation; in the built-in editor, hold Fn for cursor movement. The keys shown in the footer of each screen take precedence over these general shortcuts.
 
 ## Launcher and tools
+
+### Icon refresh in 0.5.20
+
+The launcher now uses **nine individually illustrated metallic red-and-chrome
+icons** based on the approved M5Knife mountain/Swiss-army-knife concept:
+Files, USB, WiFi, Network, Bluetooth, Infrared, Settings, Status and About.
+Each is a compact **64 × 53 pixel JPEG**, shown inside the existing tile,
+with a green selection outline and the tool's label below it.
+
+The images are packed in `src/icons.bin` (about **14 KiB total**) and
+embedded in firmware flash via `board_build.embed_files`, alongside the
+startup splash. They **do not need a microSD card** and require no additional
+runtime dependencies. The three-at-a-time horizontal launcher and all
+controls are unchanged.
 
 ### Interface refinements in 0.5.18
 
