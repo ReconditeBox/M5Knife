@@ -24,6 +24,10 @@
 #include <algorithm>
 #include <time.h>
 
+// Embedded by PlatformIO into flash; these symbols are generated from src/splash.jpg.
+extern const uint8_t splashJpgStart[] asm("_binary_src_splash_jpg_start");
+extern const uint8_t splashJpgEnd[] asm("_binary_src_splash_jpg_end");
+
 // M5Stack Cardputer Adv microSD slot, shared with the original Cardputer.
 static constexpr int SD_CS = 12, SD_MOSI = 14, SD_MISO = 39, SD_SCK = 40;
 static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
@@ -266,6 +270,12 @@ static void usbEvent(void*, esp_event_base_t base, int32_t event, void*) {
 }
 
 
+static void drawStartupSplash(){
+  auto& d=M5Cardputer.Display;
+  d.fillScreen(0x0000);
+  const uint32_t imageBytes=(uint32_t)((uintptr_t)splashJpgEnd-(uintptr_t)splashJpgStart);
+  d.drawJpg(splashJpgStart,imageBytes,0,0);
+}
 static void header(const char* text) {
   if(uiRefreshInPlace)return; // Only dynamic content changes on a navigation key.
   auto& d = M5Cardputer.Display;
@@ -273,7 +283,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.18", 5, 5);
+  d.drawString("M5KNIFE 0.5.19", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -1006,7 +1016,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.18",
+    "Version 0.5.19",
     "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
@@ -2322,6 +2332,8 @@ void setup() {
   M5Cardputer.Display.setRotation(1);
   M5Cardputer.Display.setFont(&fonts::Font0);
   M5Cardputer.Display.setTextSize(1);
+  const uint32_t splashStarted=millis();
+  drawStartupSplash();
   Serial.begin(115200);
   IrSender.begin(DISABLE_LED_FEEDBACK);
   IrSender.setSendPin(IR_TX_PIN);
@@ -2358,6 +2370,10 @@ void setup() {
       usbPhysicallyAttached=false;
     }
   }
+  // The image remains visible while the SD/NVS/USB setup runs, and for at
+  // least two seconds in total. It never needs the SD card to be present.
+  const uint32_t splashElapsed=(uint32_t)(millis()-splashStarted);
+  if(splashElapsed<2000)delay(2000-splashElapsed);
   draw();
 }
 void loop() {
