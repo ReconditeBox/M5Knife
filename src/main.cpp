@@ -305,7 +305,8 @@ static void footer(const String& text) {
 }
 static void line(int y, const String& s, bool active=false, uint16_t color=FG) {
   auto& d = M5Cardputer.Display;
-  if(uiRefreshInPlace)d.fillRect(3,y-2,234,13,BG);
+  // Viewer cursor underline extends one pixel below the ordinary row box.
+  if(uiRefreshInPlace)d.fillRect(3,y-2,234,screen==Screen::Viewer?14:13,BG);
   if (active) d.fillRoundRect(3, y-2, 234, 13, 3, SEL);
   d.setTextColor(active ? ACCENT : color, active ? SEL : BG);
   d.drawString(s, 7, y);
