@@ -100,7 +100,8 @@ thin position indicator at the right edge. The Settings list scrolls within
 the available screen space instead of drawing across the footer.
 
 Short text entry (file names, Wi-Fi passwords, network targets and search
-fields) also uses lighter redraws. Information messages have a clearer border
+fields), as well as the built-in text viewer/editor, also uses lighter redraws.
+Information messages have a clearer border
 and wrap long lines instead of letting text run off the display. These are
 presentation changes only; tool functions and shortcuts remain the same.
 
