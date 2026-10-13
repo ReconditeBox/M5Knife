@@ -1868,6 +1868,10 @@ static void drawViewer(){
     if(next==(int)textBuffer.length())break;
     offset=next+1;++number;
   }
+  // When text shrinks or the viewer scrolls past its end, clear any rows
+  // that are no longer present without blanking the header or footer.
+  if(uiRefreshInPlace && y<120)
+    M5Cardputer.Display.fillRect(3,y-2,234,122-y,BG);
   footer(textEdit?"Fn+arrows move Fn+S save Esc exit":"Up/Down scroll F find E edit B back");
 }
 static bool saveText(){
@@ -2255,7 +2259,7 @@ static void handleKeys(const Keys& k) {
       if(up && textTop>0)--textTop;
       if(down && textTop<1000)++textTop;
     }
-    draw();return;
+    redrawNavigation();return;
   } else if(screen==Screen::EditorSearch) {
     if(escape){screen=Screen::Viewer;draw();return;}
     if(k.enter){
