@@ -2,7 +2,7 @@
 
 **A standalone utilities toolkit for the M5Stack Cardputer Adv.**
 
-**Current firmware: 0.5.17**
+**Current firmware: 0.5.18**
 
 M5Knife combines an SD card file manager, USB card reader, Wi-Fi and network tools, Bluetooth scanning, infrared remotes and system information in a small keyboard-driven launcher. It also runs an HTTP file manager that can be reached over an existing Wi-Fi network or directly from a phone using the Cardputer's own hotspot.
 
@@ -89,6 +89,21 @@ M5Knife's launcher displays **three tiles at a time** and scrolls horizontally t
 **Fn is the Cardputer's `Aa` key.** The arrow symbols printed on the `; , . /` keys now navigate menus **without** Fn. In text entry fields these keys still type punctuation; in the built-in editor, hold Fn for cursor movement. The keys shown in the footer of each screen take precedence over these general shortcuts.
 
 ## Launcher and tools
+
+### Interface refinements in 0.5.18
+
+The visual style and existing nine-tool layout are unchanged, but navigation is smoother:
+moving between icons or list rows repaints the content without clearing and
+redrawing the header and footer every time. The longer Files, Wi-Fi/Bluetooth,
+Status, About, Settings, network-result and infrared-library lists now show a
+thin position indicator at the right edge. The Settings list scrolls within
+the available screen space instead of drawing across the footer.
+
+Short text entry (file names, Wi-Fi passwords, network targets and search
+fields), as well as the built-in text viewer/editor, also uses lighter redraws.
+Information messages have a clearer border
+and wrap long lines instead of letting text run off the display. These are
+presentation changes only; tool functions and shortcuts remain the same.
 
 | Tool | What it does |
 | --- | --- |

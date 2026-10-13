@@ -35,6 +35,9 @@ enum class Action { None, Mkdir, Rename, Delete, NewText };
 struct Entry { String name; bool dir; uint64_t size; };
 
 static Screen screen = Screen::Home, returnScreen = Screen::Files;
+// In-place redraws preserve the static header/footer to avoid screen flashes.
+static bool uiRefreshInPlace=false;
+static String uiLastFooter;
 static Action action = Action::None;
 static std::vector<Entry> entries;
 static String cwd = "/", inputText, message, selectedPath;
@@ -264,12 +267,13 @@ static void usbEvent(void*, esp_event_base_t base, int32_t event, void*) {
 
 
 static void header(const char* text) {
+  if(uiRefreshInPlace)return; // Only dynamic content changes on a navigation key.
   auto& d = M5Cardputer.Display;
   d.fillScreen(BG);
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.17", 5, 5);
+  d.drawString("M5KNIFE 0.5.18", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -292,6 +296,8 @@ static void header(const char* text) {
   }
 }
 static void footer(const String& text) {
+  if(uiRefreshInPlace)return;
+  uiLastFooter=text;
   auto& d = M5Cardputer.Display;
   d.fillRect(0, 120, 240, 15, 0x0205);
   d.setTextColor(MUTED, 0x0205);
@@ -299,9 +305,30 @@ static void footer(const String& text) {
 }
 static void line(int y, const String& s, bool active=false, uint16_t color=FG) {
   auto& d = M5Cardputer.Display;
+  // Viewer cursor underline extends one pixel below the ordinary row box.
+  if(uiRefreshInPlace)d.fillRect(3,y-2,234,screen==Screen::Viewer?14:13,BG);
   if (active) d.fillRoundRect(3, y-2, 234, 13, 3, SEL);
   d.setTextColor(active ? ACCENT : color, active ? SEL : BG);
   d.drawString(s, 7, y);
+}
+// Thin right-edge scrollbar; visible only when a list has hidden rows.
+static void scrollIndicator(int total,int visible,int first,int top=21,int height=95){
+  if(total<=visible)return;
+  auto& d=M5Cardputer.Display;
+  constexpr int x=238;
+  d.drawFastVLine(x,top,height,0x2308);
+  d.drawFastVLine(x+1,top,height,0x2308);
+  const int thumb=std::max(9,height*visible/total);
+  const int range=total-visible;
+  const int offset=range>0?(constrain(first,0,range)*(height-thumb))/range:0;
+  d.fillRect(x,top+offset,2,thumb,ACCENT);
+}
+static int resultLineCount(const String& text){
+  if(text.isEmpty())return 0;
+  int count=0;
+  for(size_t i=0;i<text.length();++i)if(text[i]=='\n')++count;
+  if(!text.endsWith("\n"))++count;
+  return count;
 }
 static String basenameOf(const String& p) {
   int k = p.lastIndexOf('/'); return p.substring(k + 1);
@@ -647,9 +674,12 @@ static void drawSettings(){
     "Import config from SD",
     "Export config to SD"
   };
-  const int first=std::max(0,settingsIndex-5);
-  for(int i=first;i<9;i++)line(22+(i-first)*14,rows[i],i==settingsIndex);
-  footer("Arrows choose/change Enter");
+  // Seven lines fit between the 19px header and 15px footer.
+  const int first=std::max(0,settingsIndex-6);
+  for(int i=first;i<9 && i<first+7;i++)
+    line(22+(i-first)*14,rows[i],i==settingsIndex);
+  scrollIndicator(9,7,first);
+  footer("Up/Down select  Left/Right edit");
 }
 static void settingsActivate(int delta){
   if(settingsIndex==0)autoWifi=!autoWifi;
@@ -665,7 +695,10 @@ static void settingsActivate(int delta){
     return;
   }
   else if(settingsIndex==8){showMessage(configExportSd()?"Exported M5KNIFE.CFG":"Export failed / no SD",Screen::Settings);return;}
-  applySettings();drawSettings();
+  applySettings();
+  uiRefreshInPlace=true;
+  drawSettings();
+  uiRefreshInPlace=false;
 }
 
 // Each slot is backed by a complete named section in NVS configuration.
@@ -875,6 +908,7 @@ static void drawFiles() {
     if (label.length()>32) label=label.substring(0,29)+"...";
     line(39+r*13, label, selected==i);
   }
+  scrollIndicator((int)entries.size(),6,(int)scrollPos,37,77);
   footer("Arrows move  B back  M disk");
 }
 static void drawWifiPassword() {
@@ -922,7 +956,8 @@ static void drawScan(bool wifi) {
     label+=" "+String(e.rssi)+"dBm";
     line(36+row*13,label,n==scanSelection);
   }
-  footer(wifi ? "Enter join P save L load D off" : "Up/Down scroll R rescan B back");
+  scrollIndicator((int)scanEntries.size(),6,(int)scanScroll,34,79);
+  footer(wifi ? "Enter join P save L load D off" : "Arrows scroll R rescan B back");
 }
 static String hardwareAddress(esp_mac_type_t type) {
   uint8_t mac[6] = {0};
@@ -952,7 +987,7 @@ static void drawStatus() {
     "Min heap: "+String(ESP.getMinFreeHeap()/1024)+" KiB",
     "Heap size: "+String(ESP.getHeapSize()/1024)+" KiB",
     "Battery: "+String(M5.Power.getBatteryLevel())+"%",
-    "Battery: "+String(M5.Power.getBatteryVoltage())+" mV",
+    "Battery voltage: "+String(M5.Power.getBatteryVoltage())+" mV",
     "Clock:",
     []()->String {struct tm t; if(!getLocalTime(&t,10))return "Not synchronised";char b[28];strftime(b,sizeof(b),"%Y-%m-%d %H:%M:%S",&t);return String(b);}()
   };
@@ -964,13 +999,14 @@ static void drawStatus() {
     line(22+i*14,rows[n].substring(0,37),false,
       (n==0||n==6||n==10||n==13)?ACCENT:FG);
   }
-  footer("Up/Down scroll R refresh B back");
+  scrollIndicator(total,7,statusScroll);
+  footer("Arrows scroll R refresh B back");
 }
 static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.17",
+    "Version 0.5.18",
     "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
@@ -999,7 +1035,8 @@ static void drawAbout() {
     line(22+i*14,rows[n],n==2,
       (n==0 || n==2 || n==6 || n==9 || n==11 || n==14)?ACCENT:FG);
   }
-  footer("Up/Down scroll Enter/Q QR B back");
+  scrollIndicator(count,7,aboutScroll);
+  footer("Arrows scroll Enter/Q QR B back");
 }
 // Offline QR: the code encodes the public repository URL; no network is needed.
 static void drawAboutQr() {
@@ -1044,7 +1081,8 @@ static void drawIrLibrary(){
       line(36+row*13,label,index==irLibrarySelection);
     }
   }
-  footer("Up/Down choose Enter B back");
+  scrollIndicator((int)irProfiles.size(),6,irLibraryScroll,34,79);
+  footer("Arrows select Enter use B back");
 }
 static void drawIrManual() {
   header("IR TRANSMIT");
@@ -1546,7 +1584,8 @@ static void drawNetworkResult() {
     }
     pos=end+1;
   }
-  footer("Up/Down scroll B back G0 home");
+  scrollIndicator(resultLineCount(netOutput),7,(int)netResultScroll);
+  footer("Arrows scroll B back G0 home");
 }
 static uint16_t netChecksum(const uint8_t *p,size_t len){
   uint32_t sum=0;
@@ -1766,14 +1805,23 @@ static void drawConfirm() {
   footer("Y delete   N cancel   G0 home");
 }
 static void drawMessage() {
-  header("INFORMATION");
-  int y=30, from=0;
-  while (from < (int)message.length() && y<=108) {
+  header("MESSAGE");
+  auto& d=M5Cardputer.Display;
+  d.drawRoundRect(4,24,232,89,6,0x2308);
+  d.drawFastHLine(14,31,30,ACCENT);
+  // Wrap long notices rather than losing text past the right edge.
+  int y=37,from=0;
+  while(from<(int)message.length() && y<=102) {
     int end=message.indexOf('\n',from);
-    if (end<0) end=message.length();
-    line(y,message.substring(from,end)); y+=15; from=end+1;
+    if(end<0)end=message.length();
+    if(end==from){y+=14;from=end+1;continue;}
+    for(int at=from;at<end && y<=102;at+=37){
+      line(y,message.substring(at,std::min(end,at+37)));
+      y+=14;
+    }
+    from=end+1;
   }
-  footer("Enter / G0 home");
+  footer("Enter return  G0 home");
 }
 static String textBuffer;
 static int textTop=0, textCursor=0;
@@ -1821,6 +1869,10 @@ static void drawViewer(){
     if(next==(int)textBuffer.length())break;
     offset=next+1;++number;
   }
+  // When text shrinks or the viewer scrolls past its end, clear any rows
+  // that are no longer present without blanking the header or footer.
+  if(uiRefreshInPlace && y<120)
+    M5Cardputer.Display.fillRect(3,y-2,234,122-y,BG);
   footer(textEdit?"Fn+arrows move Fn+S save Esc exit":"Up/Down scroll F find E edit B back");
 }
 static bool saveText(){
@@ -1872,6 +1924,13 @@ static void draw() {
     case Screen::WifiPassword: drawWifiPassword(); break;
     case Screen::WifiConnecting: drawWifiConnecting(); break;
   }
+}
+// Repaint navigation rows and highlights without blanking header/footer.
+// Full draws are still used on screen changes and after operations.
+static void redrawNavigation(){
+  uiRefreshInPlace=true;
+  draw();
+  uiRefreshInPlace=false;
 }
 static void goHome() { if(httpRunning)stopHttpFiles(); if(screen==Screen::WifiConnecting) WiFi.disconnect(false,false); wifiPassword=""; screen=Screen::Home; action=Action::None; draw(); }
 static void openFiles() { if (!sdReady) mountSd(); cwd="/"; scanDir(); screen=Screen::Files; draw(); }
@@ -1974,6 +2033,7 @@ static void handleKeys(const Keys& k) {
     if(down && settingsIndex<8)++settingsIndex;
     if(left)settingsActivate(-1);
     else if(right || k.enter)settingsActivate(1);
+    else if(up||down)redrawNavigation();
     else drawSettings();
     return;
   } else if(screen==Screen::About) {
@@ -1981,7 +2041,7 @@ static void handleKeys(const Keys& k) {
     if(typed(k,'q')||k.enter){screen=Screen::AboutQr;draw();return;}
     if(up && aboutScroll>0)--aboutScroll;
     if(down && aboutScroll<14)++aboutScroll;
-    drawAbout();return;
+    redrawNavigation();return;
   } else if(screen==Screen::AboutQr) {
     if(escape||backspace||typed(k,'b')||typed(k,'q')||k.enter){
       screen=Screen::About;draw();return;
@@ -2032,7 +2092,8 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::NetResult) {
     if(escape||backspace||typed(k,'b')||k.enter){screen=Screen::Network;draw();return;}
     if(up && netResultScroll>0)--netResultScroll;
-    if(down && netResultScroll<200)++netResultScroll;
+    if(down && netResultScroll<(size_t)std::max(0,resultLineCount(netOutput)-7))
+      ++netResultScroll;
   } else if(screen==Screen::Infrared) {
     if(escape||backspace||typed(k,'b')) {goHome();return;}
     if(up && irMenuIndex>0)--irMenuIndex;
@@ -2063,7 +2124,7 @@ static void handleKeys(const Keys& k) {
       }
       screen=Screen::IrRemote;irRemoteSelection=0;draw();return;
     }
-    draw();return;
+    redrawNavigation();return;
   } else if(screen==Screen::IrManual) {
     if(escape||backspace||typed(k,'b')){screen=Screen::Infrared;draw();return;}
     if(typed(k,'a')||typed(k,'c')){
@@ -2107,7 +2168,7 @@ static void handleKeys(const Keys& k) {
     if (k.enter) {beginWifiConnection();return;}
     if (k.del) {if(wifiPassword.length()) wifiPassword.remove(wifiPassword.length()-1);}
     else for(char c:k.word) if(c>=32 && c<=126 && wifiPassword.length()<63) wifiPassword+=c;
-    draw(); return;
+    redrawNavigation();return;
   } else if(screen==Screen::WifiConnecting) {
     // The connection attempt is asynchronous; G0 is handled centrally.
     return;
@@ -2142,7 +2203,7 @@ static void handleKeys(const Keys& k) {
     if(typed(k,'r')) {drawStatus();return;}
     if(up && statusScroll>0)--statusScroll;
     if(down && statusScroll<10)++statusScroll;
-    drawStatus();return;
+    redrawNavigation();return;
   } else if(screen==Screen::Files) {
     if (up && selected>0) --selected;
     if (down && selected+1<entries.size()) ++selected;
@@ -2199,7 +2260,7 @@ static void handleKeys(const Keys& k) {
       if(up && textTop>0)--textTop;
       if(down && textTop<1000)++textTop;
     }
-    draw();return;
+    redrawNavigation();return;
   } else if(screen==Screen::EditorSearch) {
     if(escape){screen=Screen::Viewer;draw();return;}
     if(k.enter){
@@ -2241,7 +2302,18 @@ static void handleKeys(const Keys& k) {
   } else if(screen==Screen::Message) {
     if(k.enter||escape||backspace) {screen=returnScreen;draw();return;}
   }
-  draw();
+  // Lightweight repaint for navigation only. Input/editing and screen
+  // transitions keep their normal full render for correctness.
+  const bool navigation=(up||down||left||right) && (
+     screen==Screen::Home || screen==Screen::Files ||
+     screen==Screen::Wifi || screen==Screen::Bluetooth ||
+     screen==Screen::Network || screen==Screen::NetResult ||
+     screen==Screen::Infrared || screen==Screen::IrRemote ||
+     screen==Screen::Disk);
+  const bool textInput=(screen==Screen::Input || screen==Screen::NetInput ||
+                        screen==Screen::IrEdit || screen==Screen::EditorSearch);
+  if(navigation || textInput)redrawNavigation();
+  else draw();
 }
 void setup() {
   auto cfg=M5.config();
@@ -2316,10 +2388,12 @@ void loop() {
     lastInteraction=millis();applySettings();
     handleKeys(M5Cardputer.Keyboard.keysState());
   }
-  // Restore normal footer after a temporary Fn+S sound-mode notification.
+  // Restore only the footer after a sound-mode toast, not the whole display.
   if(keyBeepNoticeAt && (uint32_t)(millis()-keyBeepNoticeAt)>=1400){
     keyBeepNoticeAt=0;
-    draw();
+    if(screen==Screen::AboutQr || (screen==Screen::HttpFiles && httpQrMode!=0))
+      draw(); // QR screens render their own lower labels rather than a footer.
+    else footer(uiLastFooter);
   }
   if(screen==Screen::WifiConnecting) {
     wl_status_t state=WiFi.status();
