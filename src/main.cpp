@@ -35,6 +35,8 @@ enum class Action { None, Mkdir, Rename, Delete, NewText };
 struct Entry { String name; bool dir; uint64_t size; };
 
 static Screen screen = Screen::Home, returnScreen = Screen::Files;
+// In-place redraws preserve the static header/footer to avoid screen flashes.
+static bool uiRefreshInPlace=false;
 static Action action = Action::None;
 static std::vector<Entry> entries;
 static String cwd = "/", inputText, message, selectedPath;
@@ -264,12 +266,13 @@ static void usbEvent(void*, esp_event_base_t base, int32_t event, void*) {
 
 
 static void header(const char* text) {
+  if(uiRefreshInPlace)return; // Only dynamic content changes on a navigation key.
   auto& d = M5Cardputer.Display;
   d.fillScreen(BG);
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.17", 5, 5);
+  d.drawString("M5KNIFE 0.5.18", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -292,6 +295,7 @@ static void header(const char* text) {
   }
 }
 static void footer(const String& text) {
+  if(uiRefreshInPlace)return;
   auto& d = M5Cardputer.Display;
   d.fillRect(0, 120, 240, 15, 0x0205);
   d.setTextColor(MUTED, 0x0205);
@@ -299,6 +303,7 @@ static void footer(const String& text) {
 }
 static void line(int y, const String& s, bool active=false, uint16_t color=FG) {
   auto& d = M5Cardputer.Display;
+  if(uiRefreshInPlace)d.fillRect(3,y-2,234,13,BG);
   if (active) d.fillRoundRect(3, y-2, 234, 13, 3, SEL);
   d.setTextColor(active ? ACCENT : color, active ? SEL : BG);
   d.drawString(s, 7, y);
@@ -970,7 +975,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.17",
+    "Version 0.5.18",
     "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
