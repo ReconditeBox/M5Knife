@@ -354,6 +354,7 @@ Hotspot SSIDs must be **1–32 bytes** and their WPA2 passwords **8–63 bytes**
 
 - `src/main.cpp` — firmware, splash display, launcher and built-in tools.
 - `src/splash.jpg` — 240 × 135 JPEG startup artwork, embedded in firmware flash at build time.
+- `src/icons.bin` — nine compressed chrome-and-red launcher icon JPEGs, embedded in firmware flash.
 - `platformio.ini` — board/platform configuration, USB build flags and pinned dependencies.
 - `README.md` — current user guide.
 
