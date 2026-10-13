@@ -2246,6 +2246,7 @@ static void handleKeys(const Keys& k) {
 void setup() {
   auto cfg=M5.config();
   M5Cardputer.begin(cfg,true);
+  M5Cardputer.Speaker.setVolume(36);  // Low-volume key click; no startup sound.
   M5Cardputer.Display.setRotation(1);
   M5Cardputer.Display.setFont(&fonts::Font0);
   M5Cardputer.Display.setTextSize(1);
@@ -2302,6 +2303,7 @@ void loop() {
     M5Cardputer.Display.setBrightness(0);
   // G0 is globally handled BEFORE all tool-specific keyboard processing.
   if(M5Cardputer.BtnA.wasPressed()) {
+    keyClick();
     if (usbActive) {
       if ((!usbConnected || usbEjected) && !usbWriting) {stopUsb();goHome();}
       else drawUsb();
@@ -2313,6 +2315,11 @@ void loop() {
   if(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
     lastInteraction=millis();applySettings();
     handleKeys(M5Cardputer.Keyboard.keysState());
+  }
+  // Restore normal footer after a temporary Fn+S sound-mode notification.
+  if(keyBeepNoticeAt && (uint32_t)(millis()-keyBeepNoticeAt)>=1400){
+    keyBeepNoticeAt=0;
+    draw();
   }
   if(screen==Screen::WifiConnecting) {
     wl_status_t state=WiFi.status();
