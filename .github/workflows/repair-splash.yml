@@ -1,0 +1,51 @@
+name: Temporary splash image integrity repair
+
+on:
+  push:
+    branches:
+      - feature/firmware-splash-0.5.19
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore verified six-byte transfer omission
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+
+          path = Path("src/splash.jpg")
+          blob = path.read_bytes()
+          def git_hash(data):
+              header = f"blob {len(data)}\0".encode()
+              return hashlib.sha1(header + data).hexdigest()
+
+          bad = "67e0e7c11b2910317a860044c3f37e3483a2773e"
+          expected = "84de05ee53509a29aaf4b1584bdd0ad28713eb6e"
+          current = git_hash(blob)
+
+          if current == bad:
+              # Six identical quantisation bytes were omitted by the upload.
+              blob = blob[:120] + b"222222" + blob[120:]
+              assert git_hash(blob) == expected, "Image mismatch after repair"
+              path.write_bytes(blob)
+          else:
+              assert current == expected, f"Unexpected splash asset {current}"
+
+          print(f"Verified JPEG: {len(blob)} bytes, git blob {expected}")
+          PY
+      - name: Commit verified image and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/splash.jpg
+          git rm -- .github/workflows/repair-splash.yml
+          git commit -m "Verify and repair embedded startup splash JPEG"
+          git push origin HEAD:feature/firmware-splash-0.5.19
