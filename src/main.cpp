@@ -981,7 +981,7 @@ static void drawStatus() {
     "Min heap: "+String(ESP.getMinFreeHeap()/1024)+" KiB",
     "Heap size: "+String(ESP.getHeapSize()/1024)+" KiB",
     "Battery: "+String(M5.Power.getBatteryLevel())+"%",
-    "Battery: "+String(M5.Power.getBatteryVoltage())+" mV",
+    "Battery voltage: "+String(M5.Power.getBatteryVoltage())+" mV",
     "Clock:",
     []()->String {struct tm t; if(!getLocalTime(&t,10))return "Not synchronised";char b[28];strftime(b,sizeof(b),"%Y-%m-%d %H:%M:%S",&t);return String(b);}()
   };
@@ -1799,14 +1799,23 @@ static void drawConfirm() {
   footer("Y delete   N cancel   G0 home");
 }
 static void drawMessage() {
-  header("INFORMATION");
-  int y=30, from=0;
-  while (from < (int)message.length() && y<=108) {
+  header("MESSAGE");
+  auto& d=M5Cardputer.Display;
+  d.drawRoundRect(4,24,232,89,6,0x2308);
+  d.drawFastHLine(14,31,30,ACCENT);
+  // Wrap long notices rather than losing text past the right edge.
+  int y=37,from=0;
+  while(from<(int)message.length() && y<=102) {
     int end=message.indexOf('\n',from);
-    if (end<0) end=message.length();
-    line(y,message.substring(from,end)); y+=15; from=end+1;
+    if(end<0)end=message.length();
+    if(end==from){y+=14;from=end+1;continue;}
+    for(int at=from;at<end && y<=102;at+=37){
+      line(y,message.substring(at,std::min(end,at+37)));
+      y+=14;
+    }
+    from=end+1;
   }
-  footer("Enter / G0 home");
+  footer("Enter return  G0 home");
 }
 static String textBuffer;
 static int textTop=0, textCursor=0;
