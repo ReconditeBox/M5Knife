@@ -323,7 +323,7 @@ static void footer(const String& text) {
   uiLastFooter=text;
   auto& d = M5Cardputer.Display;
   d.fillRect(0, 120, 240, 15, 0x0205);
-  if(screen==Screen::Home)d.drawFastHLine(0,120,240,0x3802);
+  d.drawFastHLine(0,120,240,screen==Screen::Home?0x3802:0x2104);
   d.setTextColor(MUTED, 0x0205);
   d.drawString(text, 4, 123);
 }
@@ -348,7 +348,7 @@ static void scrollIndicator(int total,int visible,int first,int top=21,int heigh
   const int thumb=std::max(9,height*visible/total);
   const int range=total-visible;
   const int offset=range>0?(constrain(first,0,range)*(height-thumb))/range:0;
-  d.fillRect(x,top+offset,2,thumb,ACCENT);
+  d.fillRect(x,top+offset,2,thumb,MENU_RED_DARK);
 }
 static int resultLineCount(const String& text){
   if(text.isEmpty())return 0;
@@ -2012,7 +2012,7 @@ static void handleKeys(const Keys& k) {
     if(left && homeIndex > 0) --homeIndex;
     if(right && homeIndex < 8) ++homeIndex;
     if(k.enter) {
-      // Explicit dispatch for all eight launcher tiles.
+      // Explicit dispatch for all nine launcher tiles.
       switch (homeIndex) {
         case 0: openFiles(); break;
         case 1: startUsb(); break;
