@@ -44,7 +44,7 @@ static constexpr uint16_t MENU_RED = 0xF800, MENU_RED_DARK = 0xA800;
 static constexpr uint16_t MENU_SELECT_BG = 0x3002, MENU_EDGE = 0x4208;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, IrLibrary, Status, WifiPassword, WifiConnecting, About, AboutQr, Settings, Editor, EditorSearch, HttpFiles };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, IrLibrary, Status, WifiPassword, WifiConnecting, About, AboutQr, Settings, Editor, EditorSearch, EditorExit, HttpFiles };
 enum class Action { None, Mkdir, Rename, Delete, NewText };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -94,6 +94,7 @@ static void drawNetworkInfo();
 static void drawNetworkInput();
 static void drawNetworkResult();
 static void runNetworkQuery();
+static void goHome();
 
 static int irMenuIndex=0, irEditField=0;
 static uint16_t irAddress=0;
@@ -207,6 +208,14 @@ static uint8_t probeSector[512];
 static portMUX_TYPE mscStatsMux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t mscReads=0, mscWrites=0, mscErrors=0;
 static uint32_t mscSlowReads=0, mscSlowWrites=0, mscMaxReadMs=0, mscMaxWriteMs=0;
+// USB callbacks execute on another task. Never unmount the SD while one runs.
+static uint32_t mscInFlight=0,mscLastFinishedMs=0;
+static bool usbStopNotice=false;
+static void beginMSC(){
+  portENTER_CRITICAL(&mscStatsMux);
+  ++mscInFlight;
+  portEXIT_CRITICAL(&mscStatsMux);
+}
 static void recordMSC(bool write, uint32_t elapsed, bool success) {
   portENTER_CRITICAL(&mscStatsMux);
   if (write) {
@@ -219,6 +228,8 @@ static void recordMSC(bool write, uint32_t elapsed, bool success) {
     if (elapsed >= 100) ++mscSlowReads;
   }
   if (!success) ++mscErrors;
+  if(mscInFlight>0)--mscInFlight;
+  mscLastFinishedMs=millis();
   portEXIT_CRITICAL(&mscStatsMux);
 }
 
@@ -227,6 +238,7 @@ static uint32_t sdCheckAt = 0;
 static constexpr uint32_t SD_CHECK_INTERVAL = 2500;
 // MSC callbacks run in the USB task, never access the FAT filesystem while active.
 static int32_t mscRead(uint32_t lba, uint32_t offset, void* buffer, uint32_t size) {
+  beginMSC();
   const uint32_t startMs=millis();
   const uint32_t count=usbSectorCount;
   bool ok=usbActive && count && offset<512 &&
@@ -246,6 +258,7 @@ static int32_t mscRead(uint32_t lba, uint32_t offset, void* buffer, uint32_t siz
   return ok ? (int32_t)size : -1;
 }
 static int32_t mscWrite(uint32_t lba, uint32_t offset, uint8_t* buffer, uint32_t size) {
+  beginMSC();
   const uint32_t startMs=millis();
   const uint32_t count=usbSectorCount;
   bool ok=usbActive && count && offset<512 &&
@@ -293,7 +306,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(screen==Screen::Home?MENU_RED:ACCENT,0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.21", 5, 5);
+  d.drawString("M5KNIFE 0.6.0", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -1016,7 +1029,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.21",
+    "Version 0.6.0",
     "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
@@ -1635,34 +1648,72 @@ static String netPaddedIp(IPAddress ip){
     (unsigned)ip[0],(unsigned)ip[1],(unsigned)ip[2],(unsigned)ip[3]);
   return String(buffer);
 }
-static void netLanScan(){
+// Poll hardware while scanning. A single TCP probe may take up to 60 ms,
+// but users can now interrupt between probes instead of waiting minutes.
+// 0 = continue, 1 = G0/home, 2 = B/back, 3 = Wi-Fi lost.
+static int scanCancellation(){
+  M5Cardputer.update();
+  if(M5Cardputer.BtnA.wasPressed()){
+    lastInteraction=millis();
+    keyClick();
+    waitingKeyRelease=true;
+    return 1;
+  }
+  if(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()){
+    const Keys k=M5Cardputer.Keyboard.keysState();
+    bool back=k.del;
+    for(char c:k.word){
+      if(c=='b' || c=='B' || (k.fn && c=='`'))back=true;
+    }
+    if(back){
+      lastInteraction=millis();keyClick();
+      return 2;
+    }
+  }
+  if(WiFi.status()!=WL_CONNECTED)return 3;
+  return 0;
+}
+static bool netLanScan(){
   int separator=netTarget.indexOf('-');
-  if(separator<0){netOutput="Use startIP-endIP";return;}
+  if(separator<0){netOutput="Use startIP-endIP";return true;}
   IPAddress from,to;
   if(!from.fromString(netTarget.substring(0,separator)) ||
      !to.fromString(netTarget.substring(separator+1))){
-    netOutput="Invalid IPv4 range";return;
+    netOutput="Invalid IPv4 range";return true;
   }
   uint32_t first=netIpNumber(from),last=netIpNumber(to);
   if(last<first || (uint64_t)last-first+1>256){
-    netOutput="Select 1 to 256 addresses";return;
+    netOutput="Select 1 to 256 addresses";return true;
   }
   netOutput="Active hosts:\n";
   header("LAN SCANNING");
   line(22,"Checking:",false,ACCENT);
   line(52,"Active hosts / open ports:",false,MUTED);
-  footer("Results update during scan");
+  footer("G0 home   B cancel / results");
   const uint16_t ports[]={21,22,23,53,80,139,443,445,3389,8080};
   int found=0;
+  // Also poll *within* the per-host port loop. A full /24 can otherwise
+  // block the normal event loop for more than two minutes.
   for(uint32_t number=first;;++number){
+    int cancel=scanCancellation();
+    if(cancel){
+      if(cancel==1){goHome();return false;}
+      netOutput+=cancel==2?"Scan cancelled (partial results)\n":
+                           "WiFi lost (partial results)\n";
+      return true;
+    }
     IPAddress ip=netIpAddress(number);
     String openPorts;
-    // The current address is transient; only responding hosts remain listed.
     M5Cardputer.Display.fillRect(0,35,240,15,BG);
     line(36,netPaddedIp(ip),false,ACCENT);
-    // A device is considered active only if a TCP connect succeeds.
-    // Silent devices or filtered ports cannot be discovered this way.
     for(uint16_t port:ports){
+      cancel=scanCancellation();
+      if(cancel){
+        if(cancel==1){goHome();return false;}
+        netOutput+=cancel==2?"Scan cancelled (partial results)\n":
+                             "WiFi lost (partial results)\n";
+        return true;
+      }
       WiFiClient client;
       bool open=client.connect(ip,port,60);
       client.stop();
@@ -1675,22 +1726,20 @@ static void netLanScan(){
       String hostLine=netPaddedIp(ip)+"  "+openPorts;
       netOutput+=hostLine+"\n";
       ++found;
-      // Show the newest four discoveries immediately as the scan continues.
-      // Earlier hits remain in netOutput for scrolling on the results screen.
       const int slot=(found-1)%4;
-      if(slot==0) M5Cardputer.Display.fillRect(0,65,240,54,BG);
+      if(slot==0)M5Cardputer.Display.fillRect(0,65,240,54,BG);
       line(67+slot*13,hostLine.substring(0,38));
     }
     if(number==last)break;
     delay(1);
   }
   if(!found)netOutput+="None found (TCP only)";
-  // runNetworkQuery() draws the final results, removing scan progress.
+  return true;
 }
 static void runNetworkQuery(){
   netOutput="";
   if(WiFi.status()!=WL_CONNECTED)netOutput="Connect to WiFi first.";
-  else if(netTool==4)netLanScan();
+  else if(netTool==4){if(!netLanScan())return;}
   else if(netTool==3)netPortScan();
 
   else if(netTarget.isEmpty())netOutput="Enter a host.";
@@ -1767,23 +1816,44 @@ static void drawUsb() {
   line(64,String("Slow R/W: ")+String(slowR)+"/"+String(slowW));
   line(78,String("Max R: ")+String(maxR)+"ms");
   line(92,String("Max W: ")+String(maxW)+"ms");
-  line(106,usbEjected?"Ejected":"Eject before G0",false,WARN);
-  footer("R refresh   G0 after eject");
+  line(106,usbStopNotice?"USB busy; retry G0":usbEjected?"Ejected":"Eject before G0",false,WARN);
+  footer(usbStopNotice?"Wait for writes  G0 retry":"R refresh   G0 after eject");
 }
 static void draw();
-static void stopUsb() {
-  // USB stays enumerated. The host must eject the drive before G0 can
-  // withdraw its media; on re-entry Windows sees fresh media.
-  // Remove the whole USB device before withdrawing the media.
+// Detach first, then wait for USB callbacks AND a quiet interval before
+// withdrawing SD media. A busy timeout leaves the card mounted and retries on
+// the next G0 press; it never forces an SD.end() over an active transfer.
+static bool stopUsb() {
   tud_disconnect();
-  usbPhysicallyAttached = false;
-  delay(80); // Allow USB task to service the detach before unmount.
+  usbPhysicallyAttached=false;
+  const uint32_t began=millis();
+  bool idle=false;
+  while((uint32_t)(millis()-began)<1500){
+    uint32_t pending,lastDone;
+    portENTER_CRITICAL(&mscStatsMux);
+    pending=mscInFlight;
+    lastDone=mscLastFinishedMs;
+    portEXIT_CRITICAL(&mscStatsMux);
+    const uint32_t now=millis();
+    if(!pending && (uint32_t)(now-began)>=120 &&
+       (!lastDone || (uint32_t)(now-lastDone)>=120)){
+      idle=true;
+      break;
+    }
+    delay(5);
+  }
+  if(!idle){
+    usbStopNotice=true;
+    return false;
+  }
   msc.mediaPresent(false);
-  usbActive = false;
-  usbEjected = false;
+  usbActive=false;
+  usbEjected=false;
+  usbStopNotice=false;
   SD.end();
-  sdReady = false;
-  sdCheckAt = millis() + SD_CHECK_INTERVAL;
+  sdReady=false;
+  sdCheckAt=millis()+SD_CHECK_INTERVAL;
+  return true;
 }
 static void startUsb() {
   if (!mountSd()) {screen=Screen::Usb;draw();return;}
@@ -1795,6 +1865,10 @@ static void startUsb() {
   mscSlowReads=mscSlowWrites=mscMaxReadMs=mscMaxWriteMs=0;
   portEXIT_CRITICAL(&mscStatsMux);
   usbEjected=false;
+  usbStopNotice=false;
+  portENTER_CRITICAL(&mscStatsMux);
+  mscInFlight=0;mscLastFinishedMs=0;
+  portEXIT_CRITICAL(&mscStatsMux);
   // Advertise ready media BEFORE the host can enumerate the drive.
   msc.mediaPresent(true);
   usbActive=true;
@@ -1837,7 +1911,17 @@ static String textBuffer;
 static int textTop=0, textCursor=0;
 static bool textEdit=false;
 static bool textDirty=false;
+static bool editorExitToHome=false;
 static String textFind;
+// A deliberate choice is required before losing modified text.
+static void drawEditorExit(){
+  header("UNSAVED TEXT");
+  line(30,"This file has unsaved edits.",false,WARN);
+  line(49,"S  Save and exit",false,FG);
+  line(66,"D  Discard edits",false,FG);
+  line(83,"B  Return to editor",false,FG);
+  footer("Choose S / D / B  (G0 locked)");
+}
 static bool loadText(){
   File f=SD.open(selectedPath.c_str(),FILE_READ);
   if(!f)return false;
@@ -1910,6 +1994,7 @@ static void draw() {
     case Screen::Files: drawFiles(); break;
     case Screen::Viewer: drawViewer(); break;
     case Screen::EditorSearch: drawEditorSearch(); break;
+    case Screen::EditorExit: drawEditorExit(); break;
     case Screen::Disk: drawDisk(); break;
     case Screen::Usb: drawUsb(); break;
     case Screen::Input: drawInput(); break;
@@ -1943,6 +2028,19 @@ static void redrawNavigation(){
   uiRefreshInPlace=false;
 }
 static void goHome() { if(httpRunning)stopHttpFiles(); if(screen==Screen::WifiConnecting) WiFi.disconnect(false,false); wifiPassword=""; screen=Screen::Home; action=Action::None; draw(); }
+static void finishEditorExit(bool discard){
+  textEdit=false;
+  textDirty=false;
+  if(discard)textBuffer="";
+  if(editorExitToHome)goHome();
+  else {screen=Screen::Files;draw();}
+}
+static void requestEditorExit(bool home){
+  editorExitToHome=home;
+  if(!textDirty){finishEditorExit(false);return;}
+  screen=Screen::EditorExit;
+  draw();
+}
 static void openFiles() { if (!sdReady) mountSd(); cwd="/"; scanDir(); screen=Screen::Files; draw(); }
 static void showMessage(const String& s, Screen back=Screen::Files) {
   message=s; returnScreen=back; screen=Screen::Message; draw();
@@ -2037,6 +2135,18 @@ static void handleKeys(const Keys& k) {
       }
       return;
     }
+  } else if(screen==Screen::EditorExit) {
+    // A second G0 press must NOT bypass the unsaved-changes choice.
+    if(typed(k,'b') || escape || backspace || k.enter){
+      screen=Screen::Viewer;draw();return;
+    }
+    if(typed(k,'s')){
+      if(saveText()){finishEditorExit(false);}
+      else showMessage("Save failed; edits retained",Screen::Viewer);
+      return;
+    }
+    if(typed(k,'d')){finishEditorExit(true);return;}
+    return;
   } else if(screen==Screen::Settings) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && settingsIndex>0)--settingsIndex;
@@ -2229,8 +2339,7 @@ static void handleKeys(const Keys& k) {
     if(typed(k,'x') && selected<entries.size()) {action=Action::Delete;selectedPath=childPath(entries[selected].name);screen=Screen::Confirm;draw();return;}
   } else if(screen==Screen::Viewer) {
     if(escape || (k.fn && typed(k,'b'))){
-      if(textEdit && textDirty){showMessage("Unsaved changes: Fn+S save",Screen::Viewer);return;}
-      textEdit=false;screen=Screen::Files;draw();return;
+      requestEditorExit(false);return;
     }
     if(k.fn && typed(k,'s') && textEdit){showMessage(saveText()?"Saved":"Save failed",Screen::Viewer);return;}
     if(!textEdit && typed(k,'e')){textEdit=true;textCursor=0;draw();return;}
@@ -2393,8 +2502,16 @@ void loop() {
   if(M5Cardputer.BtnA.wasPressed()) {
     keyClick();
     if (usbActive) {
-      if ((!usbConnected || usbEjected) && !usbWriting) {stopUsb();goHome();}
-      else drawUsb();
+      if ((!usbConnected || usbEjected || usbStopNotice) && !usbWriting) {
+        if(stopUsb())goHome();
+        else drawUsb();
+      }else drawUsb();
+    } else if(screen==Screen::EditorExit){
+      // Keep the confirmation visible until Save, Discard or Back.
+      draw();
+    } else if((screen==Screen::Viewer ||
+                (screen==Screen::Message && returnScreen==Screen::Viewer)) && textDirty){
+      requestEditorExit(true);
     } else goHome();
     lastInteraction=millis();applySettings();waitingKeyRelease=true;
   }
@@ -2419,8 +2536,9 @@ void loop() {
       showWifiConnectionResult(false);
     }
   }
-  if((screen==Screen::NetInput || screen==Screen::NetResult) &&
-      WiFi.status()!=WL_CONNECTED) {
+  // Preserve finished/partial LAN scan results if Wi-Fi goes away.
+  // Only an active network input screen requires an immediate connection.
+  if(screen==Screen::NetInput && WiFi.status()!=WL_CONNECTED) {
     showMessage("WiFi disconnected",Screen::Home);
   }
   // Poll only on the launcher; never touch filesystem while host owns the SD.
