@@ -306,7 +306,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(screen==Screen::Home?MENU_RED:ACCENT,0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.6.0", 5, 5);
+  d.drawString("M5KNIFE 0.7.0", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -412,7 +412,99 @@ static const char* CONFIG_FILE="/M5KNIFE.CFG";
 static bool configWriteAtomic(const String& data);
 static bool configReadFile(const char* path,String& out);
 static String activeConfig;
+static String configError;
 static bool nvsReady=false;
+static bool httpCredentialsReady=false;
+// Validate all incoming config before replacing the last working NVS copy.
+// Unknown section keys are retained for compatibility with older firmware.
+static bool configNumber(const String& value,int lowest,int highest){
+  if(value.isEmpty()||value.length()>6)return false;
+  size_t begin=value[0]=='-'?1:0;
+  if(begin==value.length())return false;
+  for(size_t i=begin;i<value.length();++i)
+    if(value[i]<'0'||value[i]>'9')return false;
+  const long number=value.toInt();
+  return number>=lowest && number<=highest;
+}
+static bool configValidate(const String& data){
+  configError="Invalid configuration";
+  if(data.isEmpty()||data.length()>16384){configError="Config exceeds 16 KiB";return false;}
+  for(unsigned char c:data)
+    if(c==0 || (c<32 && c!='\r' && c!='\n' && c!='\t')){
+      configError="Config contains control bytes";return false;
+    }
+  std::vector<String> sections;
+  String section;
+  bool settings=false,httpd=false;
+  size_t from=0;
+  while(from<data.length()){
+    int end=data.indexOf('\n',from);
+    if(end<0)end=data.length();
+    String row=data.substring(from,end);
+    from=end+1;
+    if(row.endsWith("\r"))row.remove(row.length()-1);
+    if(row.isEmpty()||row.startsWith("#")||row.startsWith(";"))continue;
+    if(row.startsWith("[")){
+      if(!row.endsWith("]")||row.length()<3||row.length()>32){
+        configError="Invalid section header";return false;
+      }
+      String name=row.substring(1,row.length()-1);
+      for(char c:name)if(!((c>='A'&&c<='Z')||
+                             (c>='0'&&c<='9')||c=='_')){
+        configError="Invalid section name";return false;
+      }
+      for(const auto& prior:sections)if(prior==name){
+        configError="Duplicate section: "+name;return false;
+      }
+      sections.push_back(name);section=name;
+      if(name=="SETTINGS")settings=true;
+      if(name=="HTTPD")httpd=true;
+      continue;
+    }
+    if(section.isEmpty()){configError="Config data outside section";return false;}
+    const int eq=row.indexOf('=');
+    if(eq<=0)continue; // Preserve existing comments / extension fields.
+    String key=row.substring(0,eq),value=row.substring(eq+1);
+    if(section=="SETTINGS"){
+      if((key=="AUTO_WIFI"||key=="NTP"||key=="KEY_BEEP") &&
+         !configNumber(value,0,1)){configError="Invalid setting: "+key;return false;}
+      if(key=="BRIGHTNESS"&&!configNumber(value,20,255)){
+        configError="Invalid BRIGHTNESS";return false;
+      }
+      if(key=="SLEEP_MIN"&&!configNumber(value,0,60)){
+        configError="Invalid SLEEP_MIN";return false;
+      }
+      if(key=="TZ_HOURS"&&!configNumber(value,-12,14)){
+        configError="Invalid TZ_HOURS";return false;
+      }
+    }else if(section=="HTTPD"){
+      if(key=="USERNAME"&&(value.isEmpty()||value.length()>64||
+                            value.indexOf(':')>=0)){
+        configError="Invalid HTTP username";return false;
+      }
+      // "1234" is permitted only as legacy input; upgraded automatically.
+      if(key=="PASSWORD"&&value!="1234"&&
+         (value.length()<8||value.length()>64)){
+        configError="HTTP password needs 8-64 chars";return false;
+      }
+    }else if(section=="HOTSPOT"){
+      if(key=="SSID"&&(value.isEmpty()||value.length()>32)){
+        configError="Invalid hotspot SSID";return false;
+      }
+      if(key=="PASSWORD"&&(value.length()<8||value.length()>63)){
+        configError="Hotspot password needs 8-63 chars";return false;
+      }
+    }else if(section=="WIFI"&&(key.startsWith("SSID")||key.startsWith("PASS"))){
+      if((key.startsWith("SSID")&&(value.isEmpty()||value.length()>32))||
+         (key.startsWith("PASS")&&value.length()>63)){
+        configError="Invalid saved WiFi record";return false;
+      }
+    }
+  }
+  if(!settings||!httpd){configError="Missing SETTINGS or HTTPD section";return false;}
+  configError="";
+  return true;
+}
 static bool configStoreNvs(const String& data){
   if(!nvsReady||data.length()>16384)return false;
   Preferences prefs;
@@ -432,18 +524,22 @@ static bool configLoadNvs(String& data){
   data=String(bytes.data());return data.length()==count-1;
 }
 static bool configApply(const String& data){
-  if(data.indexOf("[SETTINGS]")<0||data.indexOf("[HTTPD]")<0||data.length()>16384)return false;
-  if(!configStoreNvs(data))return false;
-  activeConfig=data;return true;
+  if(!configValidate(data))return false;
+  if(!configStoreNvs(data)){configError="NVS write failed";return false;}
+  activeConfig=data;configError="";
+  return true;
 }
 static bool configExportSd(){
-  if(usbActive||(!sdReady&&!mountSd()))return false;
-  return configWriteAtomic(activeConfig);
+  if(usbActive){configError="USB owns SD";return false;}
+  if(!sdReady&&!mountSd()){configError="SD not mounted";return false;}
+  if(!configWriteAtomic(activeConfig)){configError="SD write failed";return false;}
+  configError="";return true;
 }
 static bool configImportSd(){
-  if(usbActive||(!sdReady&&!mountSd()))return false;
+  if(usbActive){configError="USB owns SD";return false;}
+  if(!sdReady&&!mountSd()){configError="SD not mounted";return false;}
   String data;
-  if(!configReadFile(CONFIG_FILE,data))return false;
+  if(!configReadFile(CONFIG_FILE,data)){configError="Cannot read M5KNIFE.CFG";return false;}
   return configApply(data);
 }
 
@@ -490,8 +586,7 @@ static bool configWriteAtomic(const String& data){
   SD.remove(backup);
   return true;
 }
-static bool configReplaceSection(const String& name,const String& body){
-  String original=activeConfig;
+static String configWithSection(String original,const String& name,const String& body){
   String header="["+name+"]",replacement=header+"\n"+body;
   if(!replacement.endsWith("\n"))replacement+="\n";
   int pos=original.indexOf(header);
@@ -503,7 +598,10 @@ static bool configReplaceSection(const String& name,const String& body){
     if(original.length()&&!original.endsWith("\n"))original+="\n";
     original+=replacement;
   }
-  return configApply(original);
+  return original;
+}
+static bool configReplaceSection(const String& name,const String& body){
+  return configApply(configWithSection(activeConfig,name,body));
 }
 // [WIFI] in /M5KNIFE.CFG uses SSID1/PASS1, SSID2/PASS2, etc.
 // Preserve spaces and punctuation in values; no trimming or comment parsing.
@@ -1029,7 +1127,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.6.0",
+    "Version 0.7.0",
     "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
