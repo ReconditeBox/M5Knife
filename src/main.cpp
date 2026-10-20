@@ -697,6 +697,7 @@ static void loadWifiConfig() {
 
 static void readSettings(){
   keyBeepEnabled=false;  // Old configs remain silent until Fn+S enables sound.
+  httpUsername="m5knife";httpPassword="1234"; // Fresh defaults on SD reimport.
   String data=activeConfig;
   if(data.isEmpty())return;
   String block=configSection(data,"SETTINGS");
@@ -742,6 +743,36 @@ static void readSettings(){
     else if(key=="PASSWORD"&&value.length()>=8&&value.length()<=63 &&
        value.indexOf('\r')<0 && value.indexOf('\n')<0)hotspotPassword=value;
   }
+}
+// Legacy firmware published the same HTTP/hotspot passwords for every device.
+// Generate new device-specific credentials once and store them in NVS; leave
+// explicitly configured credentials untouched. Fail closed if NVS cannot save.
+static String generatedPassword(size_t count){
+  const char alphabet[]="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  String out;out.reserve(count);
+  for(size_t i=0;i<count;++i)out+=alphabet[esp_random()%(sizeof(alphabet)-1)];
+  return out;
+}
+static bool hardenCredentials(){
+  httpCredentialsReady=false;
+  if(!nvsReady){configError="NVS unavailable for credentials";return false;}
+  const bool rotateHttp=httpPassword=="1234"||httpPassword.length()<8;
+  const bool rotateHotspot=hotspotPassword=="M5Knife1234" ||
+                           hotspotPassword.length()<8;
+  if(rotateHttp||rotateHotspot){
+    const String newHttp=rotateHttp?generatedPassword(16):httpPassword;
+    const String newHotspot=rotateHotspot?generatedPassword(16):hotspotPassword;
+    String updated=activeConfig;
+    if(rotateHttp)updated=configWithSection(updated,"HTTPD",
+      String("USERNAME=")+httpUsername+"\nPASSWORD="+newHttp+"\n");
+    if(rotateHotspot)updated=configWithSection(updated,"HOTSPOT",
+      String("SSID=")+hotspotSsid+"\nPASSWORD="+newHotspot+"\n");
+    if(!configApply(updated))return false;
+    httpPassword=newHttp;hotspotPassword=newHotspot;
+  }
+  if(!configValidate(activeConfig))return false;
+  httpCredentialsReady=true;
+  return true;
 }
 static bool saveSettings(){
   String body=String("AUTO_WIFI=")+(autoWifi?"1":"0")+"\n"+
@@ -830,11 +861,18 @@ static void settingsActivate(int delta){
   else if(settingsIndex==5){showMessage(saveSettings()?"Settings saved in NVS":"NVS save failed",Screen::Settings);return;}
   else if(settingsIndex==6){ntpStarted=false;startNtp();}
   else if(settingsIndex==7){
-    if(configImportSd()){readSettings();irLoadLibrary();applySettings();showMessage("Config imported to NVS",Screen::Settings);}
-    else showMessage("Import failed / no SD",Screen::Settings);
+    if(configImportSd()){
+      readSettings();irLoadLibrary();applySettings();
+      if(hardenCredentials())showMessage("Config imported and validated",Screen::Settings);
+      else showMessage("Imported; HTTP locked: "+configError,Screen::Settings);
+    }else showMessage("Import rejected: "+configError,Screen::Settings);
     return;
   }
-  else if(settingsIndex==8){showMessage(configExportSd()?"Exported M5KNIFE.CFG":"Export failed / no SD",Screen::Settings);return;}
+  else if(settingsIndex==8){
+    if(configExportSd())showMessage("Exported M5KNIFE.CFG",Screen::Settings);
+    else showMessage("Export failed: "+configError,Screen::Settings);
+    return;
+  }
   applySettings();
   uiRefreshInPlace=true;
   drawSettings();
@@ -1638,6 +1676,10 @@ static void httpUploadDone(){
   String dir=httpFolderArg();httpRedirect(dir.length()?dir:"/");
 }
 static void startHttpFiles(bool forceHotspot){
+  // Never expose legacy or unpersisted HTTP credentials to the network.
+  if(!httpCredentialsReady){
+    showMessage("HTTP locked: "+configError,Screen::Network);return;
+  }
   if(usbActive || (!sdReady && !mountSd())){showMessage("SD unavailable",Screen::Network);return;}
   // Keep the existing router-connected mode. Otherwise create a private Wi-Fi
   // access point for direct phone/computer access to the HTTP file manager.
@@ -1652,8 +1694,7 @@ static void startHttpFiles(bool forceHotspot){
     }
     httpHotspotActive=true;
   }else httpHotspotActive=false;
-  // Credentials loaded from NVS [HTTPD], otherwise defaults are used.
-  if(httpPassword.isEmpty())httpPassword="1234";
+  // Device-specific credentials were verified and persisted at startup.
   httpRequests=0;httpUploadFailed=false;httpUploadPath="";
   if(!httpRoutesRegistered){
   httpFiles.on("/",HTTP_GET,httpPage);
@@ -2551,7 +2592,7 @@ void setup() {
       configApply("[SETTINGS]\nAUTO_WIFI=1\nNTP=1\nBRIGHTNESS=128\nSLEEP_MIN=0\nTZ_HOURS=0\n[WIFI]\n[REMOTE]\n[HTTPD]\nUSERNAME=m5knife\nPASSWORD=1234\n");
     }
   }
-  readSettings();irLoadLibrary();applySettings();autoConnectWifi();
+  readSettings();hardenCredentials();irLoadLibrary();applySettings();autoConnectWifi();
   lastInteraction=millis();
   sdCheckAt=millis()+SD_CHECK_INTERVAL;
   USB.onEvent(usbEvent);
