@@ -314,8 +314,8 @@ static void header(const char* text) {
     d.drawArc(x,y,6,5,220,320,ACCENT);
     d.fillCircle(x,y,2,ACCENT);
   }
-  // A thin red rule connects the home screen to its metallic icon set.
-  d.drawFastHLine(0,18,240,0x2804);
+  // Keep the red accent clear of the SD/Wi-Fi icons on the right.
+  d.drawFastHLine(0,18,188,0x2804);
   d.drawFastHLine(0,18,screen==Screen::Home?94:32,MENU_RED_DARK);
 }
 static void footer(const String& text) {
@@ -331,12 +331,14 @@ static void line(int y, const String& s, bool active=false, uint16_t color=FG) {
   auto& d = M5Cardputer.Display;
   // Viewer cursor underline extends one pixel below the ordinary row box.
   if(uiRefreshInPlace)d.fillRect(3,y-2,234,screen==Screen::Viewer?14:13,BG);
-  if(active) {
-    d.fillRoundRect(3,y-2,234,13,3,MENU_SELECT_BG);
-    d.fillRect(4,y,3,9,MENU_RED);
-  }
-  d.setTextColor(active?0xFFFF:color,active?MENU_SELECT_BG:BG);
-  d.drawString(s,active?11:7,y);
+  // The file editor uses this helper to mark the caret line; preserve its
+  // established green style. Red focus is reserved for selectable menus.
+  const bool menuFocus=active && screen!=Screen::Viewer;
+  if(active)d.fillRoundRect(3,y-2,234,13,3,menuFocus?MENU_SELECT_BG:SEL);
+  if(menuFocus)d.fillRect(4,y,3,9,MENU_RED);
+  d.setTextColor(active?(menuFocus?0xFFFF:ACCENT):color,
+                 active?(menuFocus?MENU_SELECT_BG:SEL):BG);
+  d.drawString(s,menuFocus?11:7,y);
 }
 // Thin right-edge scrollbar; visible only when a list has hidden rows.
 static void scrollIndicator(int total,int visible,int first,int top=21,int height=95){
