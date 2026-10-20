@@ -54,6 +54,7 @@ static bool uiRefreshInPlace=false;
 static String uiLastFooter;
 static Action action = Action::None;
 static std::vector<Entry> entries;
+static String fileScanError;
 static String cwd = "/", inputText, message, selectedPath;
 static bool sdReady = false;
 static size_t selected = 0, scrollPos = 0;
@@ -306,7 +307,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(screen==Screen::Home?MENU_RED:ACCENT,0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.6.0", 5, 5);
+  d.drawString("M5KNIFE 0.7.0", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -412,7 +413,100 @@ static const char* CONFIG_FILE="/M5KNIFE.CFG";
 static bool configWriteAtomic(const String& data);
 static bool configReadFile(const char* path,String& out);
 static String activeConfig;
+static String configError;
 static bool nvsReady=false;
+static bool httpCredentialsReady=false;
+static String httpLockReason="Secure credentials unavailable";
+// Validate all incoming config before replacing the last working NVS copy.
+// Unknown section keys are retained for compatibility with older firmware.
+static bool configNumber(const String& value,int lowest,int highest){
+  if(value.isEmpty()||value.length()>6)return false;
+  size_t begin=value[0]=='-'?1:0;
+  if(begin==value.length())return false;
+  for(size_t i=begin;i<value.length();++i)
+    if(value[i]<'0'||value[i]>'9')return false;
+  const long number=value.toInt();
+  return number>=lowest && number<=highest;
+}
+static bool configValidate(const String& data){
+  configError="Invalid configuration";
+  if(data.isEmpty()||data.length()>16384){configError="Config exceeds 16 KiB";return false;}
+  for(unsigned char c:data)
+    if(c==0 || (c<32 && c!='\r' && c!='\n' && c!='\t')){
+      configError="Config contains control bytes";return false;
+    }
+  std::vector<String> sections;
+  String section;
+  bool settings=false,httpd=false;
+  size_t from=0;
+  while(from<data.length()){
+    int end=data.indexOf('\n',from);
+    if(end<0)end=data.length();
+    String row=data.substring(from,end);
+    from=end+1;
+    if(row.endsWith("\r"))row.remove(row.length()-1);
+    if(row.isEmpty()||row.startsWith("#")||row.startsWith(";"))continue;
+    if(row.startsWith("[")){
+      if(!row.endsWith("]")||row.length()<3||row.length()>32){
+        configError="Invalid section header";return false;
+      }
+      String name=row.substring(1,row.length()-1);
+      for(char c:name)if(!((c>='A'&&c<='Z')||
+                             (c>='0'&&c<='9')||c=='_')){
+        configError="Invalid section name";return false;
+      }
+      for(const auto& prior:sections)if(prior==name){
+        configError="Duplicate section: "+name;return false;
+      }
+      sections.push_back(name);section=name;
+      if(name=="SETTINGS")settings=true;
+      if(name=="HTTPD")httpd=true;
+      continue;
+    }
+    if(section.isEmpty()){configError="Config data outside section";return false;}
+    const int eq=row.indexOf('=');
+    if(eq<=0)continue; // Preserve existing comments / extension fields.
+    String key=row.substring(0,eq),value=row.substring(eq+1);
+    if(section=="SETTINGS"){
+      if((key=="AUTO_WIFI"||key=="NTP"||key=="KEY_BEEP") &&
+         !configNumber(value,0,1)){configError="Invalid setting: "+key;return false;}
+      if(key=="BRIGHTNESS"&&!configNumber(value,20,255)){
+        configError="Invalid BRIGHTNESS";return false;
+      }
+      if(key=="SLEEP_MIN"&&!configNumber(value,0,60)){
+        configError="Invalid SLEEP_MIN";return false;
+      }
+      if(key=="TZ_HOURS"&&!configNumber(value,-12,14)){
+        configError="Invalid TZ_HOURS";return false;
+      }
+    }else if(section=="HTTPD"){
+      if(key=="USERNAME"&&(value.isEmpty()||value.length()>64||
+                            value.indexOf(':')>=0)){
+        configError="Invalid HTTP username";return false;
+      }
+      // "1234" is permitted only as legacy input; upgraded automatically.
+      if(key=="PASSWORD"&&value!="1234"&&
+         (value.length()<8||value.length()>64)){
+        configError="HTTP password needs 8-64 chars";return false;
+      }
+    }else if(section=="HOTSPOT"){
+      if(key=="SSID"&&(value.isEmpty()||value.length()>32)){
+        configError="Invalid hotspot SSID";return false;
+      }
+      if(key=="PASSWORD"&&(value.length()<8||value.length()>63)){
+        configError="Hotspot password needs 8-63 chars";return false;
+      }
+    }else if(section=="WIFI"&&(key.startsWith("SSID")||key.startsWith("PASS"))){
+      if((key.startsWith("SSID")&&(value.isEmpty()||value.length()>32))||
+         (key.startsWith("PASS")&&value.length()>63)){
+        configError="Invalid saved WiFi record";return false;
+      }
+    }
+  }
+  if(!settings||!httpd){configError="Missing SETTINGS or HTTPD section";return false;}
+  configError="";
+  return true;
+}
 static bool configStoreNvs(const String& data){
   if(!nvsReady||data.length()>16384)return false;
   Preferences prefs;
@@ -432,18 +526,22 @@ static bool configLoadNvs(String& data){
   data=String(bytes.data());return data.length()==count-1;
 }
 static bool configApply(const String& data){
-  if(data.indexOf("[SETTINGS]")<0||data.indexOf("[HTTPD]")<0||data.length()>16384)return false;
-  if(!configStoreNvs(data))return false;
-  activeConfig=data;return true;
+  if(!configValidate(data))return false;
+  if(!configStoreNvs(data)){configError="NVS write failed";return false;}
+  activeConfig=data;configError="";
+  return true;
 }
 static bool configExportSd(){
-  if(usbActive||(!sdReady&&!mountSd()))return false;
-  return configWriteAtomic(activeConfig);
+  if(usbActive){configError="USB owns SD";return false;}
+  if(!sdReady&&!mountSd()){configError="SD not mounted";return false;}
+  if(!configWriteAtomic(activeConfig)){configError="SD write failed";return false;}
+  configError="";return true;
 }
 static bool configImportSd(){
-  if(usbActive||(!sdReady&&!mountSd()))return false;
+  if(usbActive){configError="USB owns SD";return false;}
+  if(!sdReady&&!mountSd()){configError="SD not mounted";return false;}
   String data;
-  if(!configReadFile(CONFIG_FILE,data))return false;
+  if(!configReadFile(CONFIG_FILE,data)){configError="Cannot read M5KNIFE.CFG";return false;}
   return configApply(data);
 }
 
@@ -490,8 +588,7 @@ static bool configWriteAtomic(const String& data){
   SD.remove(backup);
   return true;
 }
-static bool configReplaceSection(const String& name,const String& body){
-  String original=activeConfig;
+static String configWithSection(String original,const String& name,const String& body){
   String header="["+name+"]",replacement=header+"\n"+body;
   if(!replacement.endsWith("\n"))replacement+="\n";
   int pos=original.indexOf(header);
@@ -503,13 +600,37 @@ static bool configReplaceSection(const String& name,const String& body){
     if(original.length()&&!original.endsWith("\n"))original+="\n";
     original+=replacement;
   }
-  return configApply(original);
+  return original;
+}
+static bool configReplaceSection(const String& name,const String& body){
+  return configApply(configWithSection(activeConfig,name,body));
+}
+// Update a single credential without removing other fields in its section.
+static String configWithValue(String original,const String& section,
+                              const String& key,const String& value){
+  const String body=configSection(original,section);
+  const String prefix=key+"=";
+  String updated;
+  bool found=false;
+  int offset=0;
+  while(offset<(int)body.length()){
+    int end=body.indexOf('\n',offset);
+    if(end<0)end=body.length();
+    String row=body.substring(offset,end);
+    if(row.startsWith(prefix)){
+      if(!found)updated+=prefix+value+"\n";
+      found=true;
+    }else if(!row.isEmpty())updated+=row+"\n";
+    offset=end+1;
+  }
+  if(!found)updated+=prefix+value+"\n";
+  return configWithSection(original,section,updated);
 }
 // [WIFI] in /M5KNIFE.CFG uses SSID1/PASS1, SSID2/PASS2, etc.
 // Preserve spaces and punctuation in values; no trimming or comment parsing.
 struct WifiRecord { String ssid, pass; };
 static constexpr size_t MAX_WIFI_RECORDS=16;
-static bool wifiConfigSdReady() {
+static bool wifiConfigNvsReady() {
   return nvsReady;
 }
 static bool readWifiRecords(std::vector<WifiRecord>& records) {
@@ -558,7 +679,7 @@ static void saveWifiConfig() {
   if(WiFi.status()!=WL_CONNECTED || WiFi.SSID()!=wifiTarget) {
     scanStatus="Connect first, then P";draw();return;
   }
-  if(!wifiConfigSdReady()) {scanStatus="SD card unavailable";draw();return;}
+  if(!wifiConfigNvsReady()) {scanStatus="NVS unavailable";draw();return;}
   if(wifiTarget.isEmpty() || wifiTarget.length()>32 ||
      wifiTarget.indexOf('\n')>=0 || wifiTarget.indexOf('\r')>=0 ||
      wifiPassword.indexOf('\n')>=0 || wifiPassword.indexOf('\r')>=0) {
@@ -566,7 +687,7 @@ static void saveWifiConfig() {
   }
   std::vector<WifiRecord> records;
   if(!readWifiRecords(records)) {
-    scanStatus="Cannot read M5KNIFE.CFG";draw();return;
+    scanStatus="Cannot read saved WiFi";draw();return;
   }
   bool found=false;
   for(auto& item:records)
@@ -579,9 +700,9 @@ static void saveWifiConfig() {
   draw();
 }
 static void loadWifiConfig() {
-  if(!wifiConfigSdReady()) {scanStatus="SD card unavailable";draw();return;}
+  if(!wifiConfigNvsReady()) {scanStatus="NVS unavailable";draw();return;}
   std::vector<WifiRecord> records;
-  if(!readWifiRecords(records)) {scanStatus="No /M5KNIFE.CFG on SD";draw();return;}
+  if(!readWifiRecords(records)) {scanStatus="No saved WiFi in NVS";draw();return;}
   if(records.empty()) {scanStatus="No valid saved networks";draw();return;}
   // L connects to the highlighted network if saved; otherwise report it.
   if(scanSelection>=scanEntries.size()) {scanStatus="Select a network first";draw();return;}
@@ -598,7 +719,11 @@ static void loadWifiConfig() {
 }
 
 static void readSettings(){
-  keyBeepEnabled=false;  // Old configs remain silent until Fn+S enables sound.
+  // Config imports may omit individual settings. Reset all optional fields
+  // before applying the new config so none leak from the previous config.
+  autoWifi=true;ntpEnabled=true;keyBeepEnabled=false;
+  brightness=128;sleepMinutes=0;tzHours=0;
+  httpUsername="m5knife";httpPassword="1234";
   String data=activeConfig;
   if(data.isEmpty())return;
   String block=configSection(data,"SETTINGS");
@@ -644,6 +769,39 @@ static void readSettings(){
     else if(key=="PASSWORD"&&value.length()>=8&&value.length()<=63 &&
        value.indexOf('\r')<0 && value.indexOf('\n')<0)hotspotPassword=value;
   }
+}
+// Legacy firmware published the same HTTP/hotspot passwords for every device.
+// Generate new device-specific credentials once and store them in NVS; leave
+// explicitly configured credentials untouched. Fail closed if NVS cannot save.
+static String generatedPassword(size_t count){
+  const char alphabet[]="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  String out;out.reserve(count);
+  for(size_t i=0;i<count;++i)out+=alphabet[esp_random()%(sizeof(alphabet)-1)];
+  return out;
+}
+static bool hardenCredentials(){
+  httpCredentialsReady=false;
+  httpLockReason="Secure credentials unavailable";
+  if(!nvsReady){
+    configError="NVS unavailable for credentials";
+    httpLockReason=configError;return false;
+  }
+  const bool rotateHttp=httpPassword=="1234"||httpPassword.length()<8;
+  const bool rotateHotspot=hotspotPassword=="M5Knife1234" ||
+                           hotspotPassword.length()<8;
+  if(rotateHttp||rotateHotspot){
+    const String newHttp=rotateHttp?generatedPassword(16):httpPassword;
+    const String newHotspot=rotateHotspot?generatedPassword(16):hotspotPassword;
+    String updated=activeConfig;
+    if(rotateHttp)updated=configWithValue(updated,"HTTPD","PASSWORD",newHttp);
+    if(rotateHotspot)updated=configWithValue(updated,"HOTSPOT",
+                                               "PASSWORD",newHotspot);
+    if(!configApply(updated)){httpLockReason=configError;return false;}
+    httpPassword=newHttp;hotspotPassword=newHotspot;
+  }
+  if(!configValidate(activeConfig)){httpLockReason=configError;return false;}
+  httpCredentialsReady=true;httpLockReason="";
+  return true;
 }
 static bool saveSettings(){
   String body=String("AUTO_WIFI=")+(autoWifi?"1":"0")+"\n"+
@@ -732,11 +890,19 @@ static void settingsActivate(int delta){
   else if(settingsIndex==5){showMessage(saveSettings()?"Settings saved in NVS":"NVS save failed",Screen::Settings);return;}
   else if(settingsIndex==6){ntpStarted=false;startNtp();}
   else if(settingsIndex==7){
-    if(configImportSd()){readSettings();irLoadLibrary();applySettings();showMessage("Config imported to NVS",Screen::Settings);}
-    else showMessage("Import failed / no SD",Screen::Settings);
+    if(configImportSd()){
+      readSettings();irLoadLibrary();applySettings();
+      ntpStarted=false;
+      if(hardenCredentials())showMessage("Config imported and validated",Screen::Settings);
+      else showMessage("Imported; HTTP locked: "+configError,Screen::Settings);
+    }else showMessage("Import rejected: "+configError,Screen::Settings);
     return;
   }
-  else if(settingsIndex==8){showMessage(configExportSd()?"Exported M5KNIFE.CFG":"Export failed / no SD",Screen::Settings);return;}
+  else if(settingsIndex==8){
+    if(configExportSd())showMessage("Exported M5KNIFE.CFG",Screen::Settings);
+    else showMessage("Export failed: "+configError,Screen::Settings);
+    return;
+  }
   applySettings();
   uiRefreshInPlace=true;
   drawSettings();
@@ -840,9 +1006,14 @@ static void irLoadLibrary(){
 }
 static void scanDir() {
   entries.clear(); selected=scrollPos=0;
-  if (!sdReady) return;
-  File folder = SD.open(cwd.c_str());
-  if (!folder || !folder.isDirectory()) { if (folder) folder.close(); return; }
+  fileScanError="";
+  if(!sdReady){fileScanError="SD not mounted - press R";return;}
+  File folder=SD.open(cwd.c_str());
+  if(!folder || !folder.isDirectory()){
+    if(folder)folder.close();
+    fileScanError="Folder unavailable - B/R retry";
+    return;
+  }
   File f = folder.openNextFile();
   while (f && entries.size() < 512) {
     String name = basenameOf(String(f.name()));
@@ -923,7 +1094,8 @@ static void drawFiles() {
   header("FILES");
   line(23, cwd.length()>38 ? "..."+cwd.substring(cwd.length()-35) : cwd, false, ACCENT);
   if (!sdReady) { line(54, "SD not mounted", false, WARN); footer("G0 menu  R retry"); return; }
-  if (entries.empty()) line(51, "(empty directory)", false, MUTED);
+  if(fileScanError.length())line(51,fileScanError,false,WARN);
+  else if(entries.empty())line(51,"(empty directory)",false,MUTED);
   for (int r=0; r<6; ++r) {
     size_t i = scrollPos + r; if (i>=entries.size()) break;
     const auto& e=entries[i];
@@ -1029,7 +1201,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.6.0",
+    "Version 0.7.0",
     "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
@@ -1255,6 +1427,11 @@ static String httpUrlEncode(const String& input){
   return out;
 }
 static bool httpAuth(){
+  // Do not cache authenticated file-manager pages or let another site frame
+  // them. HTTP still has no transport encryption; use only trusted networks.
+  httpFiles.sendHeader("Cache-Control","no-store");
+  httpFiles.sendHeader("X-Frame-Options","DENY");
+  httpFiles.sendHeader("X-Content-Type-Options","nosniff");
   if(httpFiles.authenticate(httpUsername.c_str(),httpPassword.c_str()))return true;
   httpFiles.requestAuthentication();
   return false;
@@ -1468,7 +1645,6 @@ static void httpDownload(){
   name.replace("\"","_");
   const char* mime=httpInlineType(name);
   const bool inlineView=httpFiles.arg("view")=="1" && mime;
-  httpFiles.sendHeader("X-Content-Type-Options","nosniff");
   httpFiles.sendHeader("Content-Disposition",
     String(inlineView?"inline":"attachment")+"; filename=\""+name+"\"");
   httpFiles.streamFile(f,inlineView?mime:"application/octet-stream");
@@ -1540,6 +1716,10 @@ static void httpUploadDone(){
   String dir=httpFolderArg();httpRedirect(dir.length()?dir:"/");
 }
 static void startHttpFiles(bool forceHotspot){
+  // Never expose legacy or unpersisted HTTP credentials to the network.
+  if(!httpCredentialsReady){
+    showMessage("HTTP locked: "+httpLockReason,Screen::Network);return;
+  }
   if(usbActive || (!sdReady && !mountSd())){showMessage("SD unavailable",Screen::Network);return;}
   // Keep the existing router-connected mode. Otherwise create a private Wi-Fi
   // access point for direct phone/computer access to the HTTP file manager.
@@ -1554,8 +1734,7 @@ static void startHttpFiles(bool forceHotspot){
     }
     httpHotspotActive=true;
   }else httpHotspotActive=false;
-  // Credentials loaded from NVS [HTTPD], otherwise defaults are used.
-  if(httpPassword.isEmpty())httpPassword="1234";
+  // Device-specific credentials were verified and persisted at startup.
   httpRequests=0;httpUploadFailed=false;httpUploadPath="";
   if(!httpRoutesRegistered){
   httpFiles.on("/",HTTP_GET,httpPage);
@@ -2453,7 +2632,7 @@ void setup() {
       configApply("[SETTINGS]\nAUTO_WIFI=1\nNTP=1\nBRIGHTNESS=128\nSLEEP_MIN=0\nTZ_HOURS=0\n[WIFI]\n[REMOTE]\n[HTTPD]\nUSERNAME=m5knife\nPASSWORD=1234\n");
     }
   }
-  readSettings();irLoadLibrary();applySettings();autoConnectWifi();
+  readSettings();hardenCredentials();irLoadLibrary();applySettings();autoConnectWifi();
   lastInteraction=millis();
   sdCheckAt=millis()+SD_CHECK_INTERVAL;
   USB.onEvent(usbEvent);
@@ -2541,12 +2720,27 @@ void loop() {
   if(screen==Screen::NetInput && WiFi.status()!=WL_CONNECTED) {
     showMessage("WiFi disconnected",Screen::Home);
   }
-  // Poll only on the launcher; never touch filesystem while host owns the SD.
-  if (!usbActive && screen==Screen::Home && (int32_t)(millis()-sdCheckAt)>=0) {
-    bool was=sdReady;
-    probeSd();
+  // Probe while navigating as well as on Home, without touching USB-owned
+  // media or checking the filesystem in the middle of an HTTP upload.
+  if(!usbActive && (int32_t)(millis()-sdCheckAt)>=0){
     sdCheckAt=millis()+SD_CHECK_INTERVAL;
-    if (was!=sdReady) draw();
+    if(!httpUploadFile){
+      const bool was=sdReady;
+      probeSd();
+      if(was!=sdReady){
+        if(screen==Screen::Files){
+          if(sdReady)scanDir();
+          else {entries.clear();selected=scrollPos=0;fileScanError="SD removed";}
+        }
+        if(!sdReady && httpRunning){
+          stopHttpFiles();
+          showMessage("SD removed: HTTP server stopped",Screen::Home);
+        }else if(screen==Screen::Home || screen==Screen::Files ||
+                 screen==Screen::Disk || screen==Screen::Status){
+          draw(); // Refresh the SD indicator and any visible file list.
+        }
+      }
+    }
   }
   delay(10);
 }

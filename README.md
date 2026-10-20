@@ -2,7 +2,7 @@
 
 **A standalone utilities toolkit for the M5Stack Cardputer Adv.**
 
-**Current firmware: 0.6.0**
+**Current firmware: 0.7.0**
 
 M5Knife combines an SD card file manager, USB card reader, Wi-Fi and network tools, Bluetooth scanning, infrared remotes and system information in a small keyboard-driven launcher. It also runs an HTTP file manager that can be reached over an existing Wi-Fi network or directly from a phone using the Cardputer's own hotspot.
 
@@ -99,6 +99,28 @@ M5Knife's launcher displays **three tiles at a time** and scrolls horizontally t
 **Fn is the Cardputer's `Aa` key.** The arrow symbols printed on the `; , . /` keys now navigate menus **without** Fn. In text entry fields these keys still type punctuation; in the built-in editor, hold Fn for cursor movement. The keys shown in the footer of each screen take precedence over these general shortcuts.
 
 ## Launcher and tools
+
+### Security and error handling in 0.7.0
+
+- **Device-specific HTTP credentials:** On first boot after upgrading,
+  existing public/default HTTP password `1234` and hotspot Wi-Fi password
+  `M5Knife1234` are replaced with separate generated 16-character values.
+  These are saved in NVS and shown on the Cardputer's HTTP/Hotspot screen.
+  Custom credentials that already satisfy the new requirements are retained.
+  Phones previously saved against the old default hotspot password must rejoin
+  using the new password or the **join Wi-Fi QR**.
+- **Fail-closed HTTP startup:** HTTP serving is blocked if credentials cannot
+  be validated/persisted in NVS. The screen shows why; the SD card is not
+  exposed with the known legacy passwords.
+- **Validated configuration imports:** SD configuration files are checked for
+  required sections, duplicate/bad section headers, invalid settings ranges,
+  oversized credentials and embedded control bytes **before** replacing NVS.
+  Failed imports retain the prior configuration and show a more specific error.
+- **SD recovery and error messages:** SD insertion/removal is checked during
+  normal navigation (never during USB MSC or an active HTTP upload). Files
+  shows directory access failures distinctly from empty folders. An HTTP
+  server stops if the SD is removed. Saved Wi-Fi error messages now identify
+  NVS rather than incorrectly blaming the SD card.
 
 ### Stability fixes in 0.6.0
 
@@ -259,15 +281,21 @@ The server listens on **HTTP port 80** and runs only while its HTTP screen is op
 
 ### Connect directly using the M5Knife hotspot
 
-Default values (customisable through `[HOTSPOT]` and `[HTTPD]`):
+Connection settings (customisable through `[HOTSPOT]` and `[HTTPD]`):
 
-| Setting | Default |
+| Setting | Behaviour |
 | --- | --- |
-| Hotspot SSID | `M5Knife` |
-| Hotspot Wi-Fi password | `M5Knife1234` |
+| Hotspot SSID | `M5Knife` unless customised |
+| Hotspot Wi-Fi password | **Device-specific generated 16-character password**, shown on the Cardputer |
 | Typical hotspot URL | `http://192.168.4.1/` |
-| HTTP username | `m5knife` |
-| HTTP password | `1234` |
+| HTTP username | `m5knife` unless customised |
+| HTTP password | **Separate generated 16-character password**, shown on the Cardputer |
+
+**Upgrade note:** Firmware 0.7.0 replaces the previously published hotspot
+password `M5Knife1234` and HTTP password `1234` in NVS at startup. If you
+used those defaults, old saved Wi-Fi/login credentials will stop working.
+Use the displayed new credentials or the join-Wi-Fi QR code. Strong custom
+credentials are preserved. Configuration export includes the new passwords.
 
 1. Open **Network → HTTP Hotspot** (requires the SD card).
 2. Join the **M5Knife** Wi-Fi network from the phone or computer.
@@ -277,7 +305,11 @@ Default values (customisable through `[HOTSPOT]` and `[HTTPD]`):
 
 The hotspot offers **local access only, not Internet access**. Some phones will prefer mobile data when connected to Wi-Fi without Internet. If the page will not load, temporarily **turn off mobile data**, stay connected to the M5Knife Wi-Fi network and explicitly browse to **`http://192.168.4.1/`** (not HTTPS). This was necessary during phone testing of the hotspot.
 
-**Security:** HTTP Basic credentials and file transfers use **unencrypted HTTP**, and default credentials are publicly documented. Change the defaults for your own setup, do not expose port 80 to the Internet, and use only trusted devices and networks.
+**Security:** M5Knife migrates published default passwords automatically,
+but HTTP Basic credentials and file transfers still use **unencrypted HTTP**.
+Do not expose port 80 to the Internet or use M5Knife HTTP file management
+on an untrusted Wi-Fi network. Passwords remain visible on the Cardputer and
+in exported configuration files, so protect access to both.
 
 ## Infrared remote library
 
@@ -299,9 +331,9 @@ On first startup without valid NVS configuration, M5Knife tries to import `/M5KN
 
 - **Save settings** writes the current on-screen settings to NVS.
 - **Export config to SD** writes the current NVS-backed configuration to `/M5KNIFE.CFG`, using a temporary file and backup during replacement.
-- **Import config from SD** replaces the NVS configuration from the SD file and reloads settings and IR profiles. **Back up your working configuration before importing.**
+- **Import config from SD** first validates the SD file and only then replaces NVS, reloads settings and IR profiles, and upgrades any legacy default HTTP/hotspot credentials. Invalid files leave the working configuration in place. **Back up your working configuration before importing.**
 
-The import file must contain at least `[SETTINGS]` and `[HTTPD]` and cannot exceed **16 KiB**. Other sections are optional. Network passwords and HTTP login details are stored **in plaintext**, both in the exported file and in this firmware's NVS contents. Avoid publishing a real configuration file.
+The import file must contain at least `[SETTINGS]` and `[HTTPD]` and cannot exceed **16 KiB**. Section names must be unique. Known setting values are range-checked; HTTP passwords must be 8–64 characters (legacy `1234` is automatically rotated), HTTP usernames 1–64 characters without `:`, and hotspot WPA passwords 8–63 characters. Other sections and unknown keys are preserved for compatibility. Network passwords and HTTP login details are stored **in plaintext**, both in the exported file and in this firmware's NVS contents. Avoid publishing a real configuration file.
 
 ### Example M5KNIFE.CFG
 
@@ -358,20 +390,22 @@ SLOT=1
 
 Additional Wi-Fi records use `SSID2`/`PASS2`, etc., up to 16. Additional remote sections run through `[REMOTE8]`. `[IR_LIBRARY]` records the selected slot; normally the firmware updates it when you select a profile.
 
-Hotspot SSIDs must be **1–32 bytes** and their WPA2 passwords **8–63 bytes**. If the `[HOTSPOT]` section is omitted, the default SSID and password are used.
+Hotspot SSIDs must be **1–32 bytes** and their WPA2 passwords **8–63 bytes**. If the `[HOTSPOT]` section is omitted, the SSID defaults to `M5Knife` and the password is generated and stored in NVS.
 
 ## Troubleshooting
 
 | Symptom | What to check |
 | --- | --- |
 | Build or upload fails | Open PowerShell inside the correct project; select the `m5stack-cardputer-adv` environment; verify the COM port and that no serial monitor is using it. |
-| SD card is missing | Reseat a FAT32 card; from Files use `R` to retry mounting; check the top-bar SD icon. |
+| SD card is missing | Reseat a FAT32 card; from Files use `R` to retry mounting; check the top-bar SD icon. Outside USB mode, insertion/removal is also checked periodically. |
 | Windows cannot see the USB disk | Enter **USB** mode, check Disk Management, then try USB reconnection. Make sure the correct SD card was present at boot. |
 | Cannot leave USB mode | Safely eject the drive in Windows (or disconnect the USB host); then use G0. If it reports USB busy, wait for any remaining transfers and retry G0. |
 | Hotspot joins but webpage will not load | Stay connected despite the no-Internet warning, disable the phone's mobile data temporarily, and enter `http://192.168.4.1/` explicitly. |
-| Browser requests an unexpected password | HTTP username/password are **separate** from the hotspot's Wi-Fi password; check `[HTTPD]` or the HTTP status screen. |
+| Browser requests an unexpected password | Version 0.7.0 replaces the public default HTTP/hotspot passwords. HTTP username/password are **separate** from the hotspot's Wi-Fi password; check the current HTTP status screen. |
 | IR remote missing after import | Check `[REMOTE]` / `[REMOTE2]` etc., including a valid `PROTOCOL` and hexadecimal `ADDRESS`, then import the complete SD configuration. |
 | Settings do not survive reboot | Choose **Save settings**. A full flash erase or changed NVS partition can remove stored configuration; ordinary firmware uploads should not. |
+| HTTP server says locked | NVS is unavailable or could not persist secure credentials. Do not bypass this by restoring the public default password; check NVS and re-import a valid configuration. |
+| Config import rejected | Read the on-screen validation error, correct `/M5KNIFE.CFG` and retry. Existing NVS values are retained when validation fails. |
 
 ## Safety and current limitations
 
