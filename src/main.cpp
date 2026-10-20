@@ -39,6 +39,9 @@ static constexpr uint32_t ICON_OFFSETS[10]={
 static constexpr int SD_CS = 12, SD_MOSI = 14, SD_MISO = 39, SD_SCK = 40;
 static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
+// Consistent red menu focus; retain the original green for status/success.
+static constexpr uint16_t MENU_RED = 0xF800, MENU_RED_DARK = 0xA800;
+static constexpr uint16_t MENU_SELECT_BG = 0x3002, MENU_EDGE = 0x4208;
 
 using Keys = Keyboard_Class::KeysState;
 enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, IrLibrary, Status, WifiPassword, WifiConnecting, About, AboutQr, Settings, Editor, EditorSearch, HttpFiles };
@@ -288,9 +291,9 @@ static void header(const char* text) {
   auto& d = M5Cardputer.Display;
   d.fillScreen(BG);
   d.fillRect(0, 0, 240, 19, 0x0205);
-  d.setTextColor(ACCENT, 0x0205);
+  d.setTextColor(screen==Screen::Home?MENU_RED:ACCENT,0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.20", 5, 5);
+  d.drawString("M5KNIFE 0.5.21", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -311,12 +314,16 @@ static void header(const char* text) {
     d.drawArc(x,y,6,5,220,320,ACCENT);
     d.fillCircle(x,y,2,ACCENT);
   }
+  // Keep the red accent clear of the SD/Wi-Fi icons on the right.
+  d.drawFastHLine(0,18,188,0x2804);
+  d.drawFastHLine(0,18,screen==Screen::Home?94:32,MENU_RED_DARK);
 }
 static void footer(const String& text) {
   if(uiRefreshInPlace)return;
   uiLastFooter=text;
   auto& d = M5Cardputer.Display;
   d.fillRect(0, 120, 240, 15, 0x0205);
+  d.drawFastHLine(0,120,240,screen==Screen::Home?0x3802:0x2104);
   d.setTextColor(MUTED, 0x0205);
   d.drawString(text, 4, 123);
 }
@@ -324,9 +331,14 @@ static void line(int y, const String& s, bool active=false, uint16_t color=FG) {
   auto& d = M5Cardputer.Display;
   // Viewer cursor underline extends one pixel below the ordinary row box.
   if(uiRefreshInPlace)d.fillRect(3,y-2,234,screen==Screen::Viewer?14:13,BG);
-  if (active) d.fillRoundRect(3, y-2, 234, 13, 3, SEL);
-  d.setTextColor(active ? ACCENT : color, active ? SEL : BG);
-  d.drawString(s, 7, y);
+  // The file editor uses this helper to mark the caret line; preserve its
+  // established green style. Red focus is reserved for selectable menus.
+  const bool menuFocus=active && screen!=Screen::Viewer;
+  if(active)d.fillRoundRect(3,y-2,234,13,3,menuFocus?MENU_SELECT_BG:SEL);
+  if(menuFocus)d.fillRect(4,y,3,9,MENU_RED);
+  d.setTextColor(active?(menuFocus?0xFFFF:ACCENT):color,
+                 active?(menuFocus?MENU_SELECT_BG:SEL):BG);
+  d.drawString(s,menuFocus?11:7,y);
 }
 // Thin right-edge scrollbar; visible only when a list has hidden rows.
 static void scrollIndicator(int total,int visible,int first,int top=21,int height=95){
@@ -338,7 +350,7 @@ static void scrollIndicator(int total,int visible,int first,int top=21,int heigh
   const int thumb=std::max(9,height*visible/total);
   const int range=total-visible;
   const int offset=range>0?(constrain(first,0,range)*(height-thumb))/range:0;
-  d.fillRect(x,top+offset,2,thumb,ACCENT);
+  d.fillRect(x,top+offset,2,thumb,MENU_RED_DARK);
 }
 static int resultLineCount(const String& text){
   if(text.isEmpty())return 0;
@@ -830,42 +842,69 @@ static void scanDir() {
     String x = a.name, y = b.name; x.toLowerCase(); y.toLowerCase(); return x < y;
   });
 }
-static void drawHome() {
-  header("HOME");
+// The launcher uses the approved flash-embedded chrome/red icons unchanged.
+// Keep three tools visible and draw only changed tiles when possible.
+static const char* const HOME_LABELS[9]={
+  "FILES","USB","WIFI","NETWORK","BLUETOOTH",
+  "INFRARED","SETTINGS","STATUS","ABOUT"
+};
+static void drawHomeTile(int slot,int index,bool active,bool iconsOk){
   auto& d=M5Cardputer.Display;
-  static const char* const labels[9]={
-    "FILES","USB","WIFI","NETWORK","BLUETOOTH",
-    "INFRARED","SETTINGS","STATUS","ABOUT"
-  };
-  // Display the approved chrome/red Swiss-army-knife badges at native
-  // 64x53 resolution. Each badge is a JPEG embedded in firmware flash.
-  // Keep the three-tile horizontal launcher and existing keyboard controls.
+  const int x=7+slot*78,y=24,cx=x+36;
+  const uint16_t tileBg=active?0x2002:0x1082;
+  // Erase the old focus ring/shadow before replacing a tile in place.
+  d.fillRect(x-1,y-1,74,82,BG);
+  d.fillRoundRect(x,y,72,79,7,tileBg);
+  if(iconsOk){
+    const uint32_t from=ICON_OFFSETS[index];
+    const uint32_t length=ICON_OFFSETS[index+1]-from;
+    d.drawJpg(iconJpgStart+from,length,x+4,y+3);
+  }else{
+    // Keep the launcher navigable even if an asset fails validation.
+    d.drawRoundRect(x+11,y+10,50,42,5,0x8410);
+    d.setTextColor(FG,tileBg);
+    d.drawCenterString("?",cx,y+24);
+  }
+  d.drawRoundRect(x,y,72,79,7,active?MENU_RED:MENU_EDGE);
+  if(active)d.drawRoundRect(x+1,y+1,70,77,6,MENU_RED_DARK);
+  d.drawFastHLine(x+15,y+59,42,active?MENU_RED_DARK:MENU_EDGE);
+  d.setTextColor(active?0xFFFF:FG,tileBg);
+  d.drawCenterString(HOME_LABELS[index],cx,y+63);
+  if(active)d.fillRoundRect(x+24,y+75,24,2,1,MENU_RED);
+}
+static void drawHome(){
+  header("TOOLS");
+  auto& d=M5Cardputer.Display;
   const int first=std::min(6,std::max(0,homeIndex-1));
   const bool iconsOk=(uint32_t)((uintptr_t)iconJpgEnd-
-                                (uintptr_t)iconJpgStart)>=ICON_OFFSETS[9];
-  for(int slot=0;slot<3;++slot){
-    const int i=first+slot,x=8+slot*78,y=29,cx=x+34;
-    const bool active=(homeIndex==i);
-    const uint16_t fill=active?0x2001:BG; // Subtle red tint under the selected tile
-    d.fillRoundRect(x,y,68,70,6,fill);
-    if(iconsOk) {
-      const uint32_t from=ICON_OFFSETS[i];
-      const uint32_t length=ICON_OFFSETS[i+1]-from;
-      d.drawJpg(iconJpgStart+from,length,x+2,y+2);
-    }
-    // Always keep a visible selection ring, independent of icon colours.
-    d.drawRoundRect(x,y,68,70,6,active?0xF800:0x4208);
-    if(active){
-      d.drawRoundRect(x+1,y+1,66,68,5,0xA800);
-      d.drawFastHLine(x+14,y,40,0xF800);
-    }
-    d.setTextColor(active?0xFFFF:FG,fill);
-    d.drawCenterString(labels[i],cx,y+56);
+                                 (uintptr_t)iconJpgStart)>=ICON_OFFSETS[9];
+  static int previousFirst=-1,previousSelection=-1;
+  const bool samePage=uiRefreshInPlace && first==previousFirst &&
+                      previousSelection>=first &&
+                      previousSelection<first+3;
+  if(!samePage){
+    for(int slot=0;slot<3;++slot)
+      drawHomeTile(slot,first+slot,homeIndex==first+slot,iconsOk);
+  }else if(previousSelection!=homeIndex){
+    drawHomeTile(previousSelection-first,previousSelection,false,iconsOk);
+    drawHomeTile(homeIndex-first,homeIndex,true,iconsOk);
   }
-  d.fillRect(85,103,70,13,BG);
-  d.setTextColor(MUTED,BG);
-  d.drawCenterString(String(homeIndex+1)+" / 9",120,104);
-  footer("Arrows/A-D move  Enter  G0");
+  previousFirst=first;
+  previousSelection=homeIndex;
+
+  // One unobtrusive navigation strip: left/right hints, position, nine ticks.
+  d.fillRect(0,104,240,16,BG);
+  const uint16_t leftInk=homeIndex>0?MENU_RED:0x4208;
+  const uint16_t rightInk=homeIndex<8?MENU_RED:0x4208;
+  d.drawLine(25,108,20,112,leftInk);
+  d.drawLine(20,112,25,116,leftInk);
+  d.drawLine(214,108,219,112,rightInk);
+  d.drawLine(219,112,214,116,rightInk);
+  d.setTextColor(FG,BG);
+  d.drawCenterString(String(homeIndex+1)+" / 9",120,105);
+  for(int i=0;i<9;++i)
+    d.fillRoundRect(74+i*12,116,8,2,1,i==homeIndex?MENU_RED:0x4208);
+  footer("LEFT/RIGHT MOVE   ENTER OPEN   G0 HOME");
 }
 static void drawFiles() {
   header("FILES");
@@ -977,7 +1016,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.20",
+    "Version 0.5.21",
     "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
@@ -1975,7 +2014,7 @@ static void handleKeys(const Keys& k) {
     if(left && homeIndex > 0) --homeIndex;
     if(right && homeIndex < 8) ++homeIndex;
     if(k.enter) {
-      // Explicit dispatch for all eight launcher tiles.
+      // Explicit dispatch for all nine launcher tiles.
       switch (homeIndex) {
         case 0: openFiles(); break;
         case 1: startUsb(); break;
