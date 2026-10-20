@@ -44,7 +44,7 @@ static constexpr uint16_t MENU_RED = 0xF800, MENU_RED_DARK = 0xA800;
 static constexpr uint16_t MENU_SELECT_BG = 0x3002, MENU_EDGE = 0x4208;
 
 using Keys = Keyboard_Class::KeysState;
-enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, IrLibrary, Status, WifiPassword, WifiConnecting, About, AboutQr, Settings, Editor, EditorSearch, HttpFiles };
+enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, IrLibrary, Status, WifiPassword, WifiConnecting, About, AboutQr, Settings, Editor, EditorSearch, EditorExit, HttpFiles };
 enum class Action { None, Mkdir, Rename, Delete, NewText };
 struct Entry { String name; bool dir; uint64_t size; };
 
@@ -293,7 +293,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(screen==Screen::Home?MENU_RED:ACCENT,0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.21", 5, 5);
+  d.drawString("M5KNIFE 0.6.0", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -1016,7 +1016,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.21",
+    "Version 0.6.0",
     "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
@@ -1837,7 +1837,17 @@ static String textBuffer;
 static int textTop=0, textCursor=0;
 static bool textEdit=false;
 static bool textDirty=false;
+static bool editorExitToHome=false;
 static String textFind;
+// A deliberate choice is required before losing modified text.
+static void drawEditorExit(){
+  header("UNSAVED TEXT");
+  line(30,"This file has unsaved edits.",false,WARN);
+  line(49,"S  Save and exit",false,FG);
+  line(66,"D  Discard edits",false,FG);
+  line(83,"B  Return to editor",false,FG);
+  footer("Choose S / D / B  (G0 locked)");
+}
 static bool loadText(){
   File f=SD.open(selectedPath.c_str(),FILE_READ);
   if(!f)return false;
@@ -1910,6 +1920,7 @@ static void draw() {
     case Screen::Files: drawFiles(); break;
     case Screen::Viewer: drawViewer(); break;
     case Screen::EditorSearch: drawEditorSearch(); break;
+    case Screen::EditorExit: drawEditorExit(); break;
     case Screen::Disk: drawDisk(); break;
     case Screen::Usb: drawUsb(); break;
     case Screen::Input: drawInput(); break;
@@ -1943,6 +1954,19 @@ static void redrawNavigation(){
   uiRefreshInPlace=false;
 }
 static void goHome() { if(httpRunning)stopHttpFiles(); if(screen==Screen::WifiConnecting) WiFi.disconnect(false,false); wifiPassword=""; screen=Screen::Home; action=Action::None; draw(); }
+static void finishEditorExit(bool discard){
+  textEdit=false;
+  textDirty=false;
+  if(discard)textBuffer="";
+  if(editorExitToHome)goHome();
+  else {screen=Screen::Files;draw();}
+}
+static void requestEditorExit(bool home){
+  editorExitToHome=home;
+  if(!textDirty){finishEditorExit(false);return;}
+  screen=Screen::EditorExit;
+  draw();
+}
 static void openFiles() { if (!sdReady) mountSd(); cwd="/"; scanDir(); screen=Screen::Files; draw(); }
 static void showMessage(const String& s, Screen back=Screen::Files) {
   message=s; returnScreen=back; screen=Screen::Message; draw();
@@ -2037,6 +2061,18 @@ static void handleKeys(const Keys& k) {
       }
       return;
     }
+  } else if(screen==Screen::EditorExit) {
+    // A second G0 press must NOT bypass the unsaved-changes choice.
+    if(typed(k,'b') || escape || backspace || k.enter){
+      screen=Screen::Viewer;draw();return;
+    }
+    if(typed(k,'s')){
+      if(saveText()){finishEditorExit(false);}
+      else showMessage("Save failed; edits retained",Screen::Viewer);
+      return;
+    }
+    if(typed(k,'d')){finishEditorExit(true);return;}
+    return;
   } else if(screen==Screen::Settings) {
     if(escape||backspace||typed(k,'b')){goHome();return;}
     if(up && settingsIndex>0)--settingsIndex;
@@ -2229,8 +2265,7 @@ static void handleKeys(const Keys& k) {
     if(typed(k,'x') && selected<entries.size()) {action=Action::Delete;selectedPath=childPath(entries[selected].name);screen=Screen::Confirm;draw();return;}
   } else if(screen==Screen::Viewer) {
     if(escape || (k.fn && typed(k,'b'))){
-      if(textEdit && textDirty){showMessage("Unsaved changes: Fn+S save",Screen::Viewer);return;}
-      textEdit=false;screen=Screen::Files;draw();return;
+      requestEditorExit(false);return;
     }
     if(k.fn && typed(k,'s') && textEdit){showMessage(saveText()?"Saved":"Save failed",Screen::Viewer);return;}
     if(!textEdit && typed(k,'e')){textEdit=true;textCursor=0;draw();return;}
@@ -2395,6 +2430,12 @@ void loop() {
     if (usbActive) {
       if ((!usbConnected || usbEjected) && !usbWriting) {stopUsb();goHome();}
       else drawUsb();
+    } else if(screen==Screen::EditorExit){
+      // Keep the confirmation visible until Save, Discard or Back.
+      draw();
+    } else if((screen==Screen::Viewer ||
+                (screen==Screen::Message && returnScreen==Screen::Viewer)) && textDirty){
+      requestEditorExit(true);
     } else goHome();
     lastInteraction=millis();applySettings();waitingKeyRelease=true;
   }
