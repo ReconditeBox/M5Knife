@@ -1398,6 +1398,11 @@ static String httpUrlEncode(const String& input){
   return out;
 }
 static bool httpAuth(){
+  // Do not cache authenticated file-manager pages or let another site frame
+  // them. HTTP still has no transport encryption; use only trusted networks.
+  httpFiles.sendHeader("Cache-Control","no-store");
+  httpFiles.sendHeader("X-Frame-Options","DENY");
+  httpFiles.sendHeader("X-Content-Type-Options","nosniff");
   if(httpFiles.authenticate(httpUsername.c_str(),httpPassword.c_str()))return true;
   httpFiles.requestAuthentication();
   return false;
