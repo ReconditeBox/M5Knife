@@ -2,7 +2,7 @@
 
 **A standalone utilities toolkit for the M5Stack Cardputer Adv.**
 
-**Current firmware: 0.7.0**
+**Current firmware: 0.8.0**
 
 M5Knife combines an SD card file manager, USB card reader, Wi-Fi and network tools, Bluetooth scanning, infrared remotes and system information in a small keyboard-driven launcher. It also runs an HTTP file manager that can be reached over an existing Wi-Fi network or directly from a phone using the Cardputer's own hotspot.
 
@@ -13,6 +13,7 @@ This is the **M5Stack Cardputer Adv** project, not the separate Cardputer CP/M f
 - [Getting started](#getting-started)
 - [Keyboard controls](#keyboard-controls)
 - [Launcher and tools](#launcher-and-tools)
+- [Testing and release preparation](#testing-and-release-preparation)
 - [HTTP file manager and hotspot](#http-file-manager-and-hotspot)
 - [Infrared remote library](#infrared-remote-library)
 - [Configuration and NVS](#configuration-and-nvs)
@@ -66,6 +67,29 @@ To open a 115200 baud serial monitor:
 
 If you need to find the COM port, open **Windows Device Manager → Ports (COM & LPT)**. Close the serial monitor before uploading. USB MSC uses the ESP32-S3's native USB mode, which may change enumeration and available serial ports; use the device's download/BOOT mode if normal upload fails.
 
+## Testing and release preparation
+
+Starting with **0.8.0**, every pull request and push to `main` runs the
+[automated Cardputer Adv build](https://github.com/ReconditeBox/M5Knife/actions/workflows/firmware-build.yml).
+It checks consistent firmware/About/README version labels, embedded splash
+and icon assets, and compiles the pinned PlatformIO environment.
+Successful runs include a downloadable, **short-lived build artifact**.
+An artifact is **not** yet an official firmware release or proof of
+hardware reliability.
+
+To run the same pre-build checks locally:
+
+```powershell
+python scripts/check_release.py
+```
+
+For actual hardware acceptance, follow the
+[regression test matrix](docs/REGRESSION_TESTS.md) and record results;
+this cannot be automated by GitHub Actions. See the
+[release process](docs/RELEASE_PROCESS.md) for tagging, checksums,
+rollback and 1.0 publication criteria. **Version 0.8.0 adds testing and
+documentation infrastructure, not new toolkit functions.**
+
 ## Startup splash
 
 When M5Knife powers on, it displays the supplied M5Knife Swiss Army knife and
@@ -99,6 +123,12 @@ M5Knife's launcher displays **three tiles at a time** and scrolls horizontally t
 **Fn is the Cardputer's `Aa` key.** The arrow symbols printed on the `; , . /` keys now navigate menus **without** Fn. In text entry fields these keys still type punctuation; in the built-in editor, hold Fn for cursor movement. The keys shown in the footer of each screen take precedence over these general shortcuts.
 
 ## Launcher and tools
+
+### Release readiness in 0.8.0
+
+The firmware tools, keyboard controls, launcher layout, embedded artwork and
+NVS/SD data formats remain as in 0.7.0. Only the firmware version display
+was updated. New CI and release documentation are described above.
 
 ### Security and error handling in 0.7.0
 
@@ -358,7 +388,7 @@ PASSWORD=replace-this-default
 
 [HOTSPOT]
 SSID=M5Knife
-PASSWORD=M5Knife1234
+PASSWORD=choose-a-private-8-plus-character-password
 
 [REMOTE]
 NAME=Example Samsung TV
@@ -425,6 +455,10 @@ Hotspot SSIDs must be **1–32 bytes** and their WPA2 passwords **8–63 bytes**
 - `src/splash.jpg` — 240 × 135 JPEG startup artwork, embedded in firmware flash at build time.
 - `src/icons.bin` — nine compressed chrome-and-red launcher icon JPEGs, embedded in firmware flash.
 - `platformio.ini` — board/platform configuration, USB build flags and pinned dependencies.
+- `.github/workflows/firmware-build.yml` — automated PlatformIO build and CI artifact.
+- `scripts/check_release.py` — source/version/asset pre-build verification.
+- `docs/REGRESSION_TESTS.md` — Cardputer Adv hardware acceptance tests.
+- `docs/RELEASE_PROCESS.md` — release sign-off, artifact publication and recovery.
 - `README.md` — current user guide.
 
 Changes are normally developed on separate branches, tested on Cardputer hardware and merged into `main` after approval.
