@@ -719,8 +719,11 @@ static void loadWifiConfig() {
 }
 
 static void readSettings(){
-  keyBeepEnabled=false;  // Old configs remain silent until Fn+S enables sound.
-  httpUsername="m5knife";httpPassword="1234"; // Fresh defaults on SD reimport.
+  // Config imports may omit individual settings. Reset all optional fields
+  // before applying the new config so none leak from the previous config.
+  autoWifi=true;ntpEnabled=true;keyBeepEnabled=false;
+  brightness=128;sleepMinutes=0;tzHours=0;
+  httpUsername="m5knife";httpPassword="1234";
   String data=activeConfig;
   if(data.isEmpty())return;
   String block=configSection(data,"SETTINGS");
@@ -889,6 +892,7 @@ static void settingsActivate(int delta){
   else if(settingsIndex==7){
     if(configImportSd()){
       readSettings();irLoadLibrary();applySettings();
+      ntpStarted=false;
       if(hardenCredentials())showMessage("Config imported and validated",Screen::Settings);
       else showMessage("Imported; HTTP locked: "+configError,Screen::Settings);
     }else showMessage("Import rejected: "+configError,Screen::Settings);
