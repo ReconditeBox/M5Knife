@@ -840,42 +840,69 @@ static void scanDir() {
     String x = a.name, y = b.name; x.toLowerCase(); y.toLowerCase(); return x < y;
   });
 }
-static void drawHome() {
-  header("HOME");
+// The launcher uses the approved flash-embedded chrome/red icons unchanged.
+// Keep three tools visible and draw only changed tiles when possible.
+static const char* const HOME_LABELS[9]={
+  "FILES","USB","WIFI","NETWORK","BLUETOOTH",
+  "INFRARED","SETTINGS","STATUS","ABOUT"
+};
+static void drawHomeTile(int slot,int index,bool active,bool iconsOk){
   auto& d=M5Cardputer.Display;
-  static const char* const labels[9]={
-    "FILES","USB","WIFI","NETWORK","BLUETOOTH",
-    "INFRARED","SETTINGS","STATUS","ABOUT"
-  };
-  // Display the approved chrome/red Swiss-army-knife badges at native
-  // 64x53 resolution. Each badge is a JPEG embedded in firmware flash.
-  // Keep the three-tile horizontal launcher and existing keyboard controls.
+  const int x=7+slot*78,y=24,cx=x+36;
+  const uint16_t tileBg=active?0x2002:0x1082;
+  // Erase the old focus ring/shadow before replacing a tile in place.
+  d.fillRect(x-1,y-1,74,82,BG);
+  d.fillRoundRect(x,y,72,79,7,tileBg);
+  if(iconsOk){
+    const uint32_t from=ICON_OFFSETS[index];
+    const uint32_t length=ICON_OFFSETS[index+1]-from;
+    d.drawJpg(iconJpgStart+from,length,x+4,y+3);
+  }else{
+    // Keep the launcher navigable even if an asset fails validation.
+    d.drawRoundRect(x+11,y+10,50,42,5,0x8410);
+    d.setTextColor(FG,tileBg);
+    d.drawCenterString("?",cx,y+24);
+  }
+  d.drawRoundRect(x,y,72,79,7,active?MENU_RED:MENU_EDGE);
+  if(active)d.drawRoundRect(x+1,y+1,70,77,6,MENU_RED_DARK);
+  d.drawFastHLine(x+15,y+59,42,active?MENU_RED_DARK:MENU_EDGE);
+  d.setTextColor(active?0xFFFF:FG,tileBg);
+  d.drawCenterString(HOME_LABELS[index],cx,y+63);
+  if(active)d.fillRoundRect(x+24,y+75,24,2,1,MENU_RED);
+}
+static void drawHome(){
+  header("TOOLS");
+  auto& d=M5Cardputer.Display;
   const int first=std::min(6,std::max(0,homeIndex-1));
   const bool iconsOk=(uint32_t)((uintptr_t)iconJpgEnd-
-                                (uintptr_t)iconJpgStart)>=ICON_OFFSETS[9];
-  for(int slot=0;slot<3;++slot){
-    const int i=first+slot,x=8+slot*78,y=29,cx=x+34;
-    const bool active=(homeIndex==i);
-    const uint16_t fill=active?0x2001:BG; // Subtle red tint under the selected tile
-    d.fillRoundRect(x,y,68,70,6,fill);
-    if(iconsOk) {
-      const uint32_t from=ICON_OFFSETS[i];
-      const uint32_t length=ICON_OFFSETS[i+1]-from;
-      d.drawJpg(iconJpgStart+from,length,x+2,y+2);
-    }
-    // Always keep a visible selection ring, independent of icon colours.
-    d.drawRoundRect(x,y,68,70,6,active?0xF800:0x4208);
-    if(active){
-      d.drawRoundRect(x+1,y+1,66,68,5,0xA800);
-      d.drawFastHLine(x+14,y,40,0xF800);
-    }
-    d.setTextColor(active?0xFFFF:FG,fill);
-    d.drawCenterString(labels[i],cx,y+56);
+                                 (uintptr_t)iconJpgStart)>=ICON_OFFSETS[9];
+  static int previousFirst=-1,previousSelection=-1;
+  const bool samePage=uiRefreshInPlace && first==previousFirst &&
+                      previousSelection>=first &&
+                      previousSelection<first+3;
+  if(!samePage){
+    for(int slot=0;slot<3;++slot)
+      drawHomeTile(slot,first+slot,homeIndex==first+slot,iconsOk);
+  }else if(previousSelection!=homeIndex){
+    drawHomeTile(previousSelection-first,previousSelection,false,iconsOk);
+    drawHomeTile(homeIndex-first,homeIndex,true,iconsOk);
   }
-  d.fillRect(85,103,70,13,BG);
-  d.setTextColor(MUTED,BG);
-  d.drawCenterString(String(homeIndex+1)+" / 9",120,104);
-  footer("Arrows/A-D move  Enter  G0");
+  previousFirst=first;
+  previousSelection=homeIndex;
+
+  // One unobtrusive navigation strip: left/right hints, position, nine ticks.
+  d.fillRect(0,104,240,16,BG);
+  const uint16_t leftInk=homeIndex>0?MENU_RED:0x4208;
+  const uint16_t rightInk=homeIndex<8?MENU_RED:0x4208;
+  d.drawLine(25,108,20,112,leftInk);
+  d.drawLine(20,112,25,116,leftInk);
+  d.drawLine(214,108,219,112,rightInk);
+  d.drawLine(219,112,214,116,rightInk);
+  d.setTextColor(FG,BG);
+  d.drawCenterString(String(homeIndex+1)+" / 9",120,105);
+  for(int i=0;i<9;++i)
+    d.fillRoundRect(74+i*12,116,8,2,1,i==homeIndex?MENU_RED:0x4208);
+  footer("LEFT/RIGHT MOVE   ENTER OPEN   G0 HOME");
 }
 static void drawFiles() {
   header("FILES");
