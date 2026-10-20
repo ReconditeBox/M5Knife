@@ -2,7 +2,7 @@
 
 **A standalone utilities toolkit for the M5Stack Cardputer Adv.**
 
-**Current firmware: 0.5.21**
+**Current firmware: 0.6.0**
 
 M5Knife combines an SD card file manager, USB card reader, Wi-Fi and network tools, Bluetooth scanning, infrared remotes and system information in a small keyboard-driven launcher. It also runs an HTTP file manager that can be reached over an existing Wi-Fi network or directly from a phone using the Cardputer's own hotspot.
 
@@ -91,7 +91,7 @@ M5Knife's launcher displays **three tiles at a time** and scrolls horizontally t
 | `B` | Back in most menus |
 | **Fn + backtick** | Escape/cancel in input and editor screens |
 | **Fn + S** | Toggle random-pitch key beeps ON/OFF (except while editing a text file, where it still saves) |
-| **G0** | Return to the main launcher; USB mode protects against unsafe exit |
+| **G0** | Return to the main launcher; USB mode requires safe eject, and unsaved text requires confirmation |
 | `R` | Refresh where offered |
 
 **Keypresses are silent by default.** Press **Fn+S** from the launcher or another screen to toggle short, randomly pitched speaker beeps for keyboard presses and G0. A temporary footer message confirms the new mode; the choice is saved to NVS, so it survives a restart. In the built-in text editor, Fn+S **still saves the file** instead of changing the sound mode. To change sound while editing, exit the editor first.
@@ -99,6 +99,22 @@ M5Knife's launcher displays **three tiles at a time** and scrolls horizontally t
 **Fn is the Cardputer's `Aa` key.** The arrow symbols printed on the `; , . /` keys now navigate menus **without** Fn. In text entry fields these keys still type punctuation; in the built-in editor, hold Fn for cursor movement. The keys shown in the footer of each screen take precedence over these general shortcuts.
 
 ## Launcher and tools
+
+### Stability fixes in 0.6.0
+
+- **Unsaved text is protected.** If an edited file has unsaved changes,
+  leaving with G0 or Fn+backtick opens a choice: **S** saves and exits,
+  **D** discards edits, and **B** returns to editing. G0 cannot skip this
+  confirmation. A failed save retains the unsaved text for another attempt.
+- **LAN scanning is cancellable.** While scanning, **G0** returns directly
+  to the launcher and **B** stops the scan and shows results collected so far.
+  Wi-Fi loss stops the scan with a partial-results notice. Input is checked
+  between TCP probes (up to 60 ms each).
+- **USB shutdown waits for quiet callbacks.** After the computer ejects
+  the SD drive, G0 disconnects USB and waits for ongoing USB read/write
+  callbacks to finish before unmounting the card. If it remains busy,
+  M5Knife keeps the card mounted and offers **G0 retry** rather than
+  forcing an unmount.
 
 ### Menu cleanup in 0.5.21
 
@@ -174,7 +190,7 @@ The **Files** screen lists directories before files. Navigate with the up/down a
 | `M` | Open SD disk information / format menu |
 | `R` | Refresh or retry mounting SD |
 
-Opening a file loads the built-in text viewer; the maximum file size is **8 KiB**. In the viewer, W/S scroll, F finds text and E switches to the editor. In edit mode, use **Fn + arrow-labelled keys** to move the cursor, Del and Enter to change text; ordinary letters (including W/A/S/D) and punctuation remain typeable. **Fn+S** saves. Use **Fn + backtick** to exit the viewer/editor. Files larger than 8 KiB are not supported by this viewer. Carriage returns are removed when text is loaded, so saving can change CRLF line endings to LF: do not use the editor on files whose exact bytes must be preserved.
+Opening a file loads the built-in text viewer; the maximum file size is **8 KiB**. In the viewer, W/S scroll, F finds text and E switches to the editor. In edit mode, use **Fn + arrow-labelled keys** to move the cursor, Del and Enter to change text; ordinary letters (including W/A/S/D) and punctuation remain typeable. **Fn+S** saves. Use **Fn + backtick** to exit the viewer/editor. If text is modified, you must choose **S** (save then exit), **D** (discard then exit), or **B** (return to editing); **G0** requires the same confirmation. Files larger than 8 KiB are not supported by this viewer. Carriage returns are removed when text is loaded, so saving can change CRLF line endings to LF: do not use the editor on files whose exact bytes must be preserved.
 
 Saves use a temporary file and a backup/rename sequence. The disk menu reports SD capacity and usage. **SD formatting is displayed but deliberately disabled.** Recursive copying/moving files or directories is not implemented.
 
@@ -182,7 +198,7 @@ Saves use a temporary file and a backup/rename sequence. The disk menu reports S
 
 Open **USB** to present the microSD card to a USB-connected computer. While the computer has the card, M5Knife does not simultaneously use the FAT filesystem.
 
-**In Windows, safely eject the drive before pressing G0.** The USB screen reports connection state and read/write/error timing diagnostics; G0 is intentionally restricted if the host still has the media mounted or is writing. If the drive does not appear promptly, check Windows Disk Management and try disconnecting/reconnecting the USB cable as appropriate. For the most reliable USB media capacity detection, insert the intended card before starting the firmware.
+**In Windows, safely eject the drive before pressing G0.** The USB screen reports connection state and read/write/error timing diagnostics; G0 is intentionally restricted if the host still has the media mounted or is writing. After ejection, M5Knife waits for USB read/write callbacks to become idle before unmounting the SD card; if the device reports **USB busy**, wait briefly and press G0 again. If the drive does not appear promptly, check Windows Disk Management and try disconnecting/reconnecting the USB cable as appropriate. For the most reliable USB media capacity detection, insert the intended card before starting the firmware.
 
 Never unplug the card, write to it from both sides or use your only copy of important data during USB tests.
 
@@ -205,7 +221,7 @@ The **Network** menu provides:
 - **DNS lookup:** resolve a hostname to an IPv4 address.
 - **Ping:** send three ICMP echo requests.
 - **TCP port scan:** test a fixed set of common ports on a selected host.
-- **LAN scanner:** test a range of up to 256 IPv4 addresses and list hosts that respond on the scanner's tested TCP ports.
+- **LAN scanner:** test a range of up to 256 IPv4 addresses and list hosts that respond on the scanner's tested TCP ports. During scanning **G0** returns home; **B** stops early and opens the partial results.
 - **HTTP File Server** and **HTTP Hotspot:** described below.
 
 DNS, ping and scanning need a normal Wi-Fi connection. The LAN scanner is **TCP-based**, not a full device-discovery or ICMP scanner: a host with no open tested ports may not appear. Scan only networks and devices you are authorised to test.
@@ -351,7 +367,7 @@ Hotspot SSIDs must be **1–32 bytes** and their WPA2 passwords **8–63 bytes**
 | Build or upload fails | Open PowerShell inside the correct project; select the `m5stack-cardputer-adv` environment; verify the COM port and that no serial monitor is using it. |
 | SD card is missing | Reseat a FAT32 card; from Files use `R` to retry mounting; check the top-bar SD icon. |
 | Windows cannot see the USB disk | Enter **USB** mode, check Disk Management, then try USB reconnection. Make sure the correct SD card was present at boot. |
-| Cannot leave USB mode | Safely eject the drive in Windows (or disconnect the USB host); then use G0. |
+| Cannot leave USB mode | Safely eject the drive in Windows (or disconnect the USB host); then use G0. If it reports USB busy, wait for any remaining transfers and retry G0. |
 | Hotspot joins but webpage will not load | Stay connected despite the no-Internet warning, disable the phone's mobile data temporarily, and enter `http://192.168.4.1/` explicitly. |
 | Browser requests an unexpected password | HTTP username/password are **separate** from the hotspot's Wi-Fi password; check `[HTTPD]` or the HTTP status screen. |
 | IR remote missing after import | Check `[REMOTE]` / `[REMOTE2]` etc., including a valid `PROTOCOL` and hexadecimal `ADDRESS`, then import the complete SD configuration. |
