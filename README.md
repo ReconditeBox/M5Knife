@@ -2,7 +2,7 @@
 
 **A standalone utilities toolkit for the M5Stack Cardputer Adv.**
 
-**Current firmware: 0.5.20**
+**Current firmware: 0.5.21**
 
 M5Knife combines an SD card file manager, USB card reader, Wi-Fi and network tools, Bluetooth scanning, infrared remotes and system information in a small keyboard-driven launcher. It also runs an HTTP file manager that can be reached over an existing Wi-Fi network or directly from a phone using the Cardputer's own hotspot.
 
@@ -99,6 +99,25 @@ M5Knife's launcher displays **three tiles at a time** and scrolls horizontally t
 **Fn is the Cardputer's `Aa` key.** The arrow symbols printed on the `; , . /` keys now navigate menus **without** Fn. In text entry fields these keys still type punctuation; in the built-in editor, hold Fn for cursor movement. The keys shown in the footer of each screen take precedence over these general shortcuts.
 
 ## Launcher and tools
+
+### Menu cleanup in 0.5.21
+
+The launcher now has a more consistent **red-and-charcoal** presentation
+around the existing nine metallic icons: larger, evenly spaced tile frames,
+a red double-outline on the selected tile, clearer labels, a subtle header
+accent and a slim nine-position navigation strip with previous/next hints.
+The bottom bar keeps the familiar left/right, Enter and G0 guidance.
+
+Menu selections elsewhere in the toolkit now use a **dark red highlighted row
+with a white label and red left marker**, matching the launcher. Scroll
+position markers use a muted red. Green SD/Wi-Fi status indicators remain
+green so their meaning is unchanged.
+
+For smoother navigation the launcher normally redraws **only the previous
+and newly selected icons** when all three visible icons stay in place.
+Scrolling to another group of three updates the visible tiles; entering
+the launcher draws everything. Icon artwork, ordering, keyboard mappings
+and tool behaviour are unchanged.
 
 ### Icon refresh in 0.5.20
 
