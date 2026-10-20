@@ -2687,12 +2687,27 @@ void loop() {
   if(screen==Screen::NetInput && WiFi.status()!=WL_CONNECTED) {
     showMessage("WiFi disconnected",Screen::Home);
   }
-  // Poll only on the launcher; never touch filesystem while host owns the SD.
-  if (!usbActive && screen==Screen::Home && (int32_t)(millis()-sdCheckAt)>=0) {
-    bool was=sdReady;
-    probeSd();
+  // Probe while navigating as well as on Home, without touching USB-owned
+  // media or checking the filesystem in the middle of an HTTP upload.
+  if(!usbActive && (int32_t)(millis()-sdCheckAt)>=0){
     sdCheckAt=millis()+SD_CHECK_INTERVAL;
-    if (was!=sdReady) draw();
+    if(!httpUploadFile){
+      const bool was=sdReady;
+      probeSd();
+      if(was!=sdReady){
+        if(screen==Screen::Files){
+          if(sdReady)scanDir();
+          else {entries.clear();selected=scrollPos=0;fileScanError="SD removed";}
+        }
+        if(!sdReady && httpRunning){
+          stopHttpFiles();
+          showMessage("SD removed: HTTP server stopped",Screen::Home);
+        }else if(screen==Screen::Home || screen==Screen::Files ||
+                 screen==Screen::Disk || screen==Screen::Status){
+          draw(); // Refresh the SD indicator and any visible file list.
+        }
+      }
+    }
   }
   delay(10);
 }
