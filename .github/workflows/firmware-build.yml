@@ -27,7 +27,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: pip
 
       - name: Check version and embedded assets
         run: python scripts/check_release.py
@@ -47,7 +46,7 @@ jobs:
             ${{ runner.os }}-pio-cardputer-
 
       - name: Build M5Stack Cardputer Adv firmware
-        run: python -m platformio run -e m5stack-cardputer-adv
+        run: pio run -e m5stack-cardputer-adv
 
       - name: Verify built firmware
         shell: bash
