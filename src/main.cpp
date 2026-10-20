@@ -416,6 +416,7 @@ static String activeConfig;
 static String configError;
 static bool nvsReady=false;
 static bool httpCredentialsReady=false;
+static String httpLockReason="Secure credentials unavailable";
 // Validate all incoming config before replacing the last working NVS copy.
 // Unknown section keys are retained for compatibility with older firmware.
 static bool configNumber(const String& value,int lowest,int highest){
@@ -777,7 +778,11 @@ static String generatedPassword(size_t count){
 }
 static bool hardenCredentials(){
   httpCredentialsReady=false;
-  if(!nvsReady){configError="NVS unavailable for credentials";return false;}
+  httpLockReason="Secure credentials unavailable";
+  if(!nvsReady){
+    configError="NVS unavailable for credentials";
+    httpLockReason=configError;return false;
+  }
   const bool rotateHttp=httpPassword=="1234"||httpPassword.length()<8;
   const bool rotateHotspot=hotspotPassword=="M5Knife1234" ||
                            hotspotPassword.length()<8;
@@ -788,11 +793,11 @@ static bool hardenCredentials(){
     if(rotateHttp)updated=configWithValue(updated,"HTTPD","PASSWORD",newHttp);
     if(rotateHotspot)updated=configWithValue(updated,"HOTSPOT",
                                                "PASSWORD",newHotspot);
-    if(!configApply(updated))return false;
+    if(!configApply(updated)){httpLockReason=configError;return false;}
     httpPassword=newHttp;hotspotPassword=newHotspot;
   }
-  if(!configValidate(activeConfig))return false;
-  httpCredentialsReady=true;
+  if(!configValidate(activeConfig)){httpLockReason=configError;return false;}
+  httpCredentialsReady=true;httpLockReason="";
   return true;
 }
 static bool saveSettings(){
@@ -1636,7 +1641,6 @@ static void httpDownload(){
   name.replace("\"","_");
   const char* mime=httpInlineType(name);
   const bool inlineView=httpFiles.arg("view")=="1" && mime;
-  httpFiles.sendHeader("X-Content-Type-Options","nosniff");
   httpFiles.sendHeader("Content-Disposition",
     String(inlineView?"inline":"attachment")+"; filename=\""+name+"\"");
   httpFiles.streamFile(f,inlineView?mime:"application/octet-stream");
@@ -1710,7 +1714,7 @@ static void httpUploadDone(){
 static void startHttpFiles(bool forceHotspot){
   // Never expose legacy or unpersisted HTTP credentials to the network.
   if(!httpCredentialsReady){
-    showMessage("HTTP locked: "+configError,Screen::Network);return;
+    showMessage("HTTP locked: "+httpLockReason,Screen::Network);return;
   }
   if(usbActive || (!sdReady && !mountSd())){showMessage("SD unavailable",Screen::Network);return;}
   // Keep the existing router-connected mode. Otherwise create a private Wi-Fi
