@@ -604,6 +604,27 @@ static String configWithSection(String original,const String& name,const String&
 static bool configReplaceSection(const String& name,const String& body){
   return configApply(configWithSection(activeConfig,name,body));
 }
+// Update a single credential without removing other fields in its section.
+static String configWithValue(String original,const String& section,
+                              const String& key,const String& value){
+  const String body=configSection(original,section);
+  const String prefix=key+"=";
+  String updated;
+  bool found=false;
+  int offset=0;
+  while(offset<(int)body.length()){
+    int end=body.indexOf('\n',offset);
+    if(end<0)end=body.length();
+    String row=body.substring(offset,end);
+    if(row.startsWith(prefix)){
+      if(!found)updated+=prefix+value+"\n";
+      found=true;
+    }else if(!row.isEmpty())updated+=row+"\n";
+    offset=end+1;
+  }
+  if(!found)updated+=prefix+value+"\n";
+  return configWithSection(original,section,updated);
+}
 // [WIFI] in /M5KNIFE.CFG uses SSID1/PASS1, SSID2/PASS2, etc.
 // Preserve spaces and punctuation in values; no trimming or comment parsing.
 struct WifiRecord { String ssid, pass; };
@@ -764,10 +785,9 @@ static bool hardenCredentials(){
     const String newHttp=rotateHttp?generatedPassword(16):httpPassword;
     const String newHotspot=rotateHotspot?generatedPassword(16):hotspotPassword;
     String updated=activeConfig;
-    if(rotateHttp)updated=configWithSection(updated,"HTTPD",
-      String("USERNAME=")+httpUsername+"\nPASSWORD="+newHttp+"\n");
-    if(rotateHotspot)updated=configWithSection(updated,"HOTSPOT",
-      String("SSID=")+hotspotSsid+"\nPASSWORD="+newHotspot+"\n");
+    if(rotateHttp)updated=configWithValue(updated,"HTTPD","PASSWORD",newHttp);
+    if(rotateHotspot)updated=configWithValue(updated,"HOTSPOT",
+                                               "PASSWORD",newHotspot);
     if(!configApply(updated))return false;
     httpPassword=newHttp;hotspotPassword=newHotspot;
   }
