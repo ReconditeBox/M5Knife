@@ -94,6 +94,7 @@ static void drawNetworkInfo();
 static void drawNetworkInput();
 static void drawNetworkResult();
 static void runNetworkQuery();
+static void goHome();
 
 static int irMenuIndex=0, irEditField=0;
 static uint16_t irAddress=0;
@@ -1635,34 +1636,72 @@ static String netPaddedIp(IPAddress ip){
     (unsigned)ip[0],(unsigned)ip[1],(unsigned)ip[2],(unsigned)ip[3]);
   return String(buffer);
 }
-static void netLanScan(){
+// Poll hardware while scanning. A single TCP probe may take up to 60 ms,
+// but users can now interrupt between probes instead of waiting minutes.
+// 0 = continue, 1 = G0/home, 2 = B/back, 3 = Wi-Fi lost.
+static int scanCancellation(){
+  M5Cardputer.update();
+  if(M5Cardputer.BtnA.wasPressed()){
+    lastInteraction=millis();
+    keyClick();
+    waitingKeyRelease=true;
+    return 1;
+  }
+  if(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()){
+    const Keys k=M5Cardputer.Keyboard.keysState();
+    bool back=k.del;
+    for(char c:k.word){
+      if(c=='b' || c=='B' || (k.fn && c=='`'))back=true;
+    }
+    if(back){
+      lastInteraction=millis();keyClick();
+      return 2;
+    }
+  }
+  if(WiFi.status()!=WL_CONNECTED)return 3;
+  return 0;
+}
+static bool netLanScan(){
   int separator=netTarget.indexOf('-');
-  if(separator<0){netOutput="Use startIP-endIP";return;}
+  if(separator<0){netOutput="Use startIP-endIP";return true;}
   IPAddress from,to;
   if(!from.fromString(netTarget.substring(0,separator)) ||
      !to.fromString(netTarget.substring(separator+1))){
-    netOutput="Invalid IPv4 range";return;
+    netOutput="Invalid IPv4 range";return true;
   }
   uint32_t first=netIpNumber(from),last=netIpNumber(to);
   if(last<first || (uint64_t)last-first+1>256){
-    netOutput="Select 1 to 256 addresses";return;
+    netOutput="Select 1 to 256 addresses";return true;
   }
   netOutput="Active hosts:\n";
   header("LAN SCANNING");
   line(22,"Checking:",false,ACCENT);
   line(52,"Active hosts / open ports:",false,MUTED);
-  footer("Results update during scan");
+  footer("G0 home   B cancel / results");
   const uint16_t ports[]={21,22,23,53,80,139,443,445,3389,8080};
   int found=0;
+  // Also poll *within* the per-host port loop. A full /24 can otherwise
+  // block the normal event loop for more than two minutes.
   for(uint32_t number=first;;++number){
+    int cancel=scanCancellation();
+    if(cancel){
+      if(cancel==1){goHome();return false;}
+      netOutput+=cancel==2?"Scan cancelled (partial results)\n":
+                           "WiFi lost (partial results)\n";
+      return true;
+    }
     IPAddress ip=netIpAddress(number);
     String openPorts;
-    // The current address is transient; only responding hosts remain listed.
     M5Cardputer.Display.fillRect(0,35,240,15,BG);
     line(36,netPaddedIp(ip),false,ACCENT);
-    // A device is considered active only if a TCP connect succeeds.
-    // Silent devices or filtered ports cannot be discovered this way.
     for(uint16_t port:ports){
+      cancel=scanCancellation();
+      if(cancel){
+        if(cancel==1){goHome();return false;}
+        netOutput+=cancel==2?"Scan cancelled (partial results)\n":
+                             "WiFi lost (partial results)\n";
+        return true;
+      }
       WiFiClient client;
       bool open=client.connect(ip,port,60);
       client.stop();
@@ -1675,22 +1714,20 @@ static void netLanScan(){
       String hostLine=netPaddedIp(ip)+"  "+openPorts;
       netOutput+=hostLine+"\n";
       ++found;
-      // Show the newest four discoveries immediately as the scan continues.
-      // Earlier hits remain in netOutput for scrolling on the results screen.
       const int slot=(found-1)%4;
-      if(slot==0) M5Cardputer.Display.fillRect(0,65,240,54,BG);
+      if(slot==0)M5Cardputer.Display.fillRect(0,65,240,54,BG);
       line(67+slot*13,hostLine.substring(0,38));
     }
     if(number==last)break;
     delay(1);
   }
   if(!found)netOutput+="None found (TCP only)";
-  // runNetworkQuery() draws the final results, removing scan progress.
+  return true;
 }
 static void runNetworkQuery(){
   netOutput="";
   if(WiFi.status()!=WL_CONNECTED)netOutput="Connect to WiFi first.";
-  else if(netTool==4)netLanScan();
+  else if(netTool==4){if(!netLanScan())return;}
   else if(netTool==3)netPortScan();
 
   else if(netTarget.isEmpty())netOutput="Enter a host.";
