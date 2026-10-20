@@ -39,6 +39,9 @@ static constexpr uint32_t ICON_OFFSETS[10]={
 static constexpr int SD_CS = 12, SD_MOSI = 14, SD_MISO = 39, SD_SCK = 40;
 static constexpr uint16_t BG = 0x0841, FG = 0xDFBE, ACCENT = 0x07E0;
 static constexpr uint16_t MUTED = 0x8410, SEL = 0x020E, WARN = 0xFD20;
+// Consistent red menu focus; retain the original green for status/success.
+static constexpr uint16_t MENU_RED = 0xF800, MENU_RED_DARK = 0xA800;
+static constexpr uint16_t MENU_SELECT_BG = 0x3002, MENU_EDGE = 0x4208;
 
 using Keys = Keyboard_Class::KeysState;
 enum class Screen { Home, Files, Viewer, Disk, Usb, Input, Confirm, Message, Wifi, Network, NetInfo, NetInput, NetResult, Bluetooth, Infrared, IrManual, IrEdit, IrRemote, IrLibrary, Status, WifiPassword, WifiConnecting, About, AboutQr, Settings, Editor, EditorSearch, HttpFiles };
@@ -290,7 +293,7 @@ static void header(const char* text) {
   d.fillRect(0, 0, 240, 19, 0x0205);
   d.setTextColor(ACCENT, 0x0205);
   d.setTextSize(1);
-  d.drawString("M5KNIFE 0.5.20", 5, 5);
+  d.drawString("M5KNIFE 0.5.21", 5, 5);
   d.setTextColor(FG, 0x0205);
   // Reserve the top-right of every screen for compact status icons.
   d.drawRightString(text, 185, 5);
@@ -977,7 +980,7 @@ static void drawAbout() {
   header("ABOUT");
   const char* rows[]={
     "M5Knife",
-    "Version 0.5.20",
+    "Version 0.5.21",
     "GitHub QR: Enter / Q",
     "M5Stack Cardputer Adv",
     "Multi-function toolkit",
