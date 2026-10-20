@@ -208,6 +208,14 @@ static uint8_t probeSector[512];
 static portMUX_TYPE mscStatsMux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t mscReads=0, mscWrites=0, mscErrors=0;
 static uint32_t mscSlowReads=0, mscSlowWrites=0, mscMaxReadMs=0, mscMaxWriteMs=0;
+// USB callbacks execute on another task. Never unmount the SD while one runs.
+static uint32_t mscInFlight=0,mscLastFinishedMs=0;
+static bool usbStopNotice=false;
+static void beginMSC(){
+  portENTER_CRITICAL(&mscStatsMux);
+  ++mscInFlight;
+  portEXIT_CRITICAL(&mscStatsMux);
+}
 static void recordMSC(bool write, uint32_t elapsed, bool success) {
   portENTER_CRITICAL(&mscStatsMux);
   if (write) {
@@ -220,6 +228,8 @@ static void recordMSC(bool write, uint32_t elapsed, bool success) {
     if (elapsed >= 100) ++mscSlowReads;
   }
   if (!success) ++mscErrors;
+  if(mscInFlight>0)--mscInFlight;
+  mscLastFinishedMs=millis();
   portEXIT_CRITICAL(&mscStatsMux);
 }
 
@@ -228,6 +238,7 @@ static uint32_t sdCheckAt = 0;
 static constexpr uint32_t SD_CHECK_INTERVAL = 2500;
 // MSC callbacks run in the USB task, never access the FAT filesystem while active.
 static int32_t mscRead(uint32_t lba, uint32_t offset, void* buffer, uint32_t size) {
+  beginMSC();
   const uint32_t startMs=millis();
   const uint32_t count=usbSectorCount;
   bool ok=usbActive && count && offset<512 &&
@@ -247,6 +258,7 @@ static int32_t mscRead(uint32_t lba, uint32_t offset, void* buffer, uint32_t siz
   return ok ? (int32_t)size : -1;
 }
 static int32_t mscWrite(uint32_t lba, uint32_t offset, uint8_t* buffer, uint32_t size) {
+  beginMSC();
   const uint32_t startMs=millis();
   const uint32_t count=usbSectorCount;
   bool ok=usbActive && count && offset<512 &&
@@ -1804,23 +1816,44 @@ static void drawUsb() {
   line(64,String("Slow R/W: ")+String(slowR)+"/"+String(slowW));
   line(78,String("Max R: ")+String(maxR)+"ms");
   line(92,String("Max W: ")+String(maxW)+"ms");
-  line(106,usbEjected?"Ejected":"Eject before G0",false,WARN);
-  footer("R refresh   G0 after eject");
+  line(106,usbStopNotice?"USB busy; retry G0":usbEjected?"Ejected":"Eject before G0",false,WARN);
+  footer(usbStopNotice?"Wait for writes  G0 retry":"R refresh   G0 after eject");
 }
 static void draw();
-static void stopUsb() {
-  // USB stays enumerated. The host must eject the drive before G0 can
-  // withdraw its media; on re-entry Windows sees fresh media.
-  // Remove the whole USB device before withdrawing the media.
+// Detach first, then wait for USB callbacks AND a quiet interval before
+// withdrawing SD media. A busy timeout leaves the card mounted and retries on
+// the next G0 press; it never forces an SD.end() over an active transfer.
+static bool stopUsb() {
   tud_disconnect();
-  usbPhysicallyAttached = false;
-  delay(80); // Allow USB task to service the detach before unmount.
+  usbPhysicallyAttached=false;
+  const uint32_t began=millis();
+  bool idle=false;
+  while((uint32_t)(millis()-began)<1500){
+    uint32_t pending,lastDone;
+    portENTER_CRITICAL(&mscStatsMux);
+    pending=mscInFlight;
+    lastDone=mscLastFinishedMs;
+    portEXIT_CRITICAL(&mscStatsMux);
+    const uint32_t now=millis();
+    if(!pending && (uint32_t)(now-began)>=120 &&
+       (!lastDone || (uint32_t)(now-lastDone)>=120)){
+      idle=true;
+      break;
+    }
+    delay(5);
+  }
+  if(!idle){
+    usbStopNotice=true;
+    return false;
+  }
   msc.mediaPresent(false);
-  usbActive = false;
-  usbEjected = false;
+  usbActive=false;
+  usbEjected=false;
+  usbStopNotice=false;
   SD.end();
-  sdReady = false;
-  sdCheckAt = millis() + SD_CHECK_INTERVAL;
+  sdReady=false;
+  sdCheckAt=millis()+SD_CHECK_INTERVAL;
+  return true;
 }
 static void startUsb() {
   if (!mountSd()) {screen=Screen::Usb;draw();return;}
@@ -1832,6 +1865,10 @@ static void startUsb() {
   mscSlowReads=mscSlowWrites=mscMaxReadMs=mscMaxWriteMs=0;
   portEXIT_CRITICAL(&mscStatsMux);
   usbEjected=false;
+  usbStopNotice=false;
+  portENTER_CRITICAL(&mscStatsMux);
+  mscInFlight=0;mscLastFinishedMs=0;
+  portEXIT_CRITICAL(&mscStatsMux);
   // Advertise ready media BEFORE the host can enumerate the drive.
   msc.mediaPresent(true);
   usbActive=true;
@@ -2465,8 +2502,10 @@ void loop() {
   if(M5Cardputer.BtnA.wasPressed()) {
     keyClick();
     if (usbActive) {
-      if ((!usbConnected || usbEjected) && !usbWriting) {stopUsb();goHome();}
-      else drawUsb();
+      if ((!usbConnected || usbEjected || usbStopNotice) && !usbWriting) {
+        if(stopUsb())goHome();
+        else drawUsb();
+      }else drawUsb();
     } else if(screen==Screen::EditorExit){
       // Keep the confirmation visible until Save, Discard or Back.
       draw();
