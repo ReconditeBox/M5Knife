@@ -54,6 +54,7 @@ static bool uiRefreshInPlace=false;
 static String uiLastFooter;
 static Action action = Action::None;
 static std::vector<Entry> entries;
+static String fileScanError;
 static String cwd = "/", inputText, message, selectedPath;
 static bool sdReady = false;
 static size_t selected = 0, scrollPos = 0;
@@ -607,7 +608,7 @@ static bool configReplaceSection(const String& name,const String& body){
 // Preserve spaces and punctuation in values; no trimming or comment parsing.
 struct WifiRecord { String ssid, pass; };
 static constexpr size_t MAX_WIFI_RECORDS=16;
-static bool wifiConfigSdReady() {
+static bool wifiConfigNvsReady() {
   return nvsReady;
 }
 static bool readWifiRecords(std::vector<WifiRecord>& records) {
@@ -656,7 +657,7 @@ static void saveWifiConfig() {
   if(WiFi.status()!=WL_CONNECTED || WiFi.SSID()!=wifiTarget) {
     scanStatus="Connect first, then P";draw();return;
   }
-  if(!wifiConfigSdReady()) {scanStatus="SD card unavailable";draw();return;}
+  if(!wifiConfigNvsReady()) {scanStatus="NVS unavailable";draw();return;}
   if(wifiTarget.isEmpty() || wifiTarget.length()>32 ||
      wifiTarget.indexOf('\n')>=0 || wifiTarget.indexOf('\r')>=0 ||
      wifiPassword.indexOf('\n')>=0 || wifiPassword.indexOf('\r')>=0) {
@@ -664,7 +665,7 @@ static void saveWifiConfig() {
   }
   std::vector<WifiRecord> records;
   if(!readWifiRecords(records)) {
-    scanStatus="Cannot read M5KNIFE.CFG";draw();return;
+    scanStatus="Cannot read saved WiFi";draw();return;
   }
   bool found=false;
   for(auto& item:records)
@@ -677,9 +678,9 @@ static void saveWifiConfig() {
   draw();
 }
 static void loadWifiConfig() {
-  if(!wifiConfigSdReady()) {scanStatus="SD card unavailable";draw();return;}
+  if(!wifiConfigNvsReady()) {scanStatus="NVS unavailable";draw();return;}
   std::vector<WifiRecord> records;
-  if(!readWifiRecords(records)) {scanStatus="No /M5KNIFE.CFG on SD";draw();return;}
+  if(!readWifiRecords(records)) {scanStatus="No saved WiFi in NVS";draw();return;}
   if(records.empty()) {scanStatus="No valid saved networks";draw();return;}
   // L connects to the highlighted network if saved; otherwise report it.
   if(scanSelection>=scanEntries.size()) {scanStatus="Select a network first";draw();return;}
@@ -976,9 +977,14 @@ static void irLoadLibrary(){
 }
 static void scanDir() {
   entries.clear(); selected=scrollPos=0;
-  if (!sdReady) return;
-  File folder = SD.open(cwd.c_str());
-  if (!folder || !folder.isDirectory()) { if (folder) folder.close(); return; }
+  fileScanError="";
+  if(!sdReady){fileScanError="SD not mounted - press R";return;}
+  File folder=SD.open(cwd.c_str());
+  if(!folder || !folder.isDirectory()){
+    if(folder)folder.close();
+    fileScanError="Folder unavailable - B/R retry";
+    return;
+  }
   File f = folder.openNextFile();
   while (f && entries.size() < 512) {
     String name = basenameOf(String(f.name()));
@@ -1059,7 +1065,8 @@ static void drawFiles() {
   header("FILES");
   line(23, cwd.length()>38 ? "..."+cwd.substring(cwd.length()-35) : cwd, false, ACCENT);
   if (!sdReady) { line(54, "SD not mounted", false, WARN); footer("G0 menu  R retry"); return; }
-  if (entries.empty()) line(51, "(empty directory)", false, MUTED);
+  if(fileScanError.length())line(51,fileScanError,false,WARN);
+  else if(entries.empty())line(51,"(empty directory)",false,MUTED);
   for (int r=0; r<6; ++r) {
     size_t i = scrollPos + r; if (i>=entries.size()) break;
     const auto& e=entries[i];
