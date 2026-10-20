@@ -2536,8 +2536,9 @@ void loop() {
       showWifiConnectionResult(false);
     }
   }
-  if((screen==Screen::NetInput || screen==Screen::NetResult) &&
-      WiFi.status()!=WL_CONNECTED) {
+  // Preserve finished/partial LAN scan results if Wi-Fi goes away.
+  // Only an active network input screen requires an immediate connection.
+  if(screen==Screen::NetInput && WiFi.status()!=WL_CONNECTED) {
     showMessage("WiFi disconnected",Screen::Home);
   }
   // Poll only on the launcher; never touch filesystem while host owns the SD.
